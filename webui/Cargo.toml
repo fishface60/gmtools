@@ -1,5 +1,5 @@
 [package]
-name = "hello-wasm"
+name = "webui"
 version = "0.1.0"
 authors = ["Richard Maw <richard.maw@gmail.com>"]
 edition = "2018"
