@@ -1,30 +1,18 @@
 use std::io::Error as IOError;
 
 use futures::{
-    channel::mpsc::unbounded as unbounded_channel,
-    prelude::*,
-    select,
+    channel::mpsc::unbounded as unbounded_channel, prelude::*, select,
 };
 
-use async_std::{
-    net::TcpListener,
-    task::block_on,
-};
+use async_std::{net::TcpListener, task::block_on};
 use async_tungstenite::{
     accept_async,
-    tungstenite::{
-        protocol::Message,
-        Error as TungsteniteError,
-    },
+    tungstenite::{protocol::Message, Error as TungsteniteError},
 };
 
 use notify::{
-    Error as NotifyError,
-    event::Event as NotifyEvent,
-    RecommendedWatcher,
-    RecursiveMode,
-    Result as NotifyResult,
-    Watcher,
+    event::Event as NotifyEvent, Error as NotifyError, RecommendedWatcher,
+    RecursiveMode, Result as NotifyResult, Watcher,
 };
 
 #[derive(Debug)]
