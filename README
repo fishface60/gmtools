@@ -1,0 +1,43 @@
+Tools to bridge GURPS tooling and provide automation.
+
+GCS Constraints
+---------------
+
+1.  GCS has no API, must poll/watch file for changes.
+
+MapTool constraints
+-------------------
+
+1.  MapTool can only make blocking HTTP GET requests
+    that lock up the interface while ongoing.
+2.  MapTool 1.8 can have UI elements make requests to run Macros,
+    and macros may execute code in UI elements, so requests are possible.
+3.  MapTool script is unwieldy and JavaScript is better, but still not nice,
+    so code in it should be kept to a minimum.
+4.  Notifications of changes can only happen from other clients,
+    so actions must be driven by the UI and broadcast to the connected user
+    who owns the character sheet.
+
+Design constraints
+------------------
+
+Must be cross platform,
+so cross-compile to Windows with mingw-w64,
+and use a web UI.
+
+Do we either:
+1.  Export a HTTP API for use by both MapTool and the UI, or
+2.  Implement a MapTool client that can synchronise
+
+
+GCS file update:
+
+GCS → Agent → MapTool Bridge → MapTool
+
+Apply change in Agent UI
+
+GCS ← Agent → MapTool Bridge → MapTool
+
+Apply change in MapTool
+
+GCS ← Agent ← MapTool Bridge ← MapTool

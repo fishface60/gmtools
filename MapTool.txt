@@ -1,0 +1,159 @@
+Doesn't support making requests from html5 interface elements,
+no websockets or even XMLHttpRequest.
+MTScript has REST.get, but it blocks all other execution,
+so you can't do long polling.
+If all the interesting functions have macros defined that can dispatch results to the calling frame, then you can drive macros from a frame instead,
+but it's still unpleasant to write code that way.
+We can't write WASM because the frames don't support that and the third-party interpreter doesn't support its export form.
+We can write JavaScript in whatever and output a base64 blob that a more carefully written script can load and run.
+However the only way to receive notifications would be from another MT client,
+so either we need a third party client, or you've got to manually sync.
+
+Handshake is a serialised Handshake.Request {name: String, password: String, role: String, version: String} written to the socket, and gets a serialies Response {code: int, message: String, policy: ServerPolicy}
+
+Comms are message-based over TCP.
+4 byte big endian message size followed by message payload.
+
+Expects message to be GZipped.
+Uses Hessian serialisation library.
+https://github.com/Lynskylate/serde_hessian/tree/master/src is an implementationthough it doesn't appear to do method calls like MapTool uses.
+http://hessian.caucho.com/doc/hessian-1.0-spec.xtp#Call is the spec in-use.
+Appears to be ['c', 0x1, 0x0, 'm'] + be16(len(method_name)) + method_name + (type, value)* + ['z']
+
+Client -> Server messages:
+  bootPlayer(playerName: String)
+  bringTokensToFront(zoneGUID: GUID, tokenGUIDs: Set<GUID>)
+  draw(zoneGUID: GUID, pen: Pen, drawable: Drawable)
+  updateDrawing(zoneGUID: GUID, pen: Pen, drawnElement: DrawnElement)
+  enforceZoneView(zoneGUID: GUID, x: int, y: int, scale: double,
+                  gmWidth: int, gmHeight: int)
+  restoreZoneView(zoneGUID: GUID)
+  exposeFoW(zoneGUID: GUID, area: Area, selectedToks: Set<GUID>)
+  getAsset(assetID: MD5Key)
+  getZone(zoneGUID: GUID)
+  hideFoW(zoneGUID: GUID, area: Area, selectedToks: Set<GUID>)
+  setFoW(zoneGUID: GUID, area: Area, selectedToks: Set<GUID>)
+  hidePointer(player: String)
+  setLiveTypingLabel(player: String, add: bool)
+  enforceNotification(enforce: bool)
+  message(message: TextMessage)
+  execFunction(target: String, source: String, functionName: String,
+               args: List<Variant>)
+  execLink(link: String, target: String, source: String)
+  putAsset(Asset)
+  putLabel(zoneGUID: GUID, label: Label)
+  updateTokenProperty(zoneGUID: GUID, tokenGUID: GUID, update: Token.Update,
+                      value: Variant)
+  putToken(zoneGUID: GUID, token: Token)
+  editToken(zoneGUID: GUID, token: Token)
+  putZone(zone: Zone)
+  removeZone(zoneGUID: GUID)
+  removeAsset(assetID: MD5Key)
+  removeToken(zoneGUID: GUID, tokenGUID: GUID)
+  removeTokens(zoneGUID: GUID, tokenGUIDs: List<GUID>)
+  removeLabel(zoneGUID: GUID, labelGUID: GUID)
+  sendTokensToBack(zoneGUID: GUID, tokenGUIDs: Set<GUID>)
+  setCampaign(campaign: Campaign)
+  setCampaignName(campaign: Campaign)
+  setZoneGridSize(zoneGUID: GUID, xOffset: int, yOffset: int,
+                  size: int, color: int)
+  setZoneVisibility(zoneGUID: GUID, visible: bool)
+  setZoneHasFoW(zoneGUID: GUID, hasFog: bool)
+  showPointer(player: String, pointer: Pointer)
+  startTokenMove(playerId: String, zoneGUID: GUID, keyToken: GUID,
+                 selectedSet: Set<GUID>)
+  toggleTokenMoveWaypoint(zoneGUID: GUID, keyToken: GUID, zonePoint: ZonePoint)
+  stopTokenMove(zoneGUID: GUID, keyToken: GUID)
+  undoDraw(zoneGUID: GUID, drawableID: GUID)
+  updateTokenMove(zoneGUID: GUID, keyToken: GUID, x: int, y: int)
+  clearAllDrawings(zoneGUID: GUID, layer: Zone.Layer)
+  enforceZone(zoneGUID: GUID)
+  setServerPolicy(policy: ServerPolicy)
+  addTopology(zoneGUID: GUID, area: Area, topologyMode: TopologyMode)
+  removeTopology(zoneGUID: GUID, area: Area, topologyMode: TopologyMode)
+  renameZone(zoneGUID: GUID, name: String)
+  heartbeat(data: String) // data is unused
+  updateCampaign(campaignProperties: CampaignProperties)
+  movePointer(player: String, x: int, y: int)
+  updateInitiative(list: InitiativeList, ownerPermission: bool)
+  updateTokenInitiative(zoneGUID: GUID, tokenGUID: GUID, isHolding: bool,
+                        state: String, index: int)
+  setVisionType(zoneGUID: GUID, visionType: VisionType)
+  setBoard(zoneGUID: GUID, mapID: MD5Key, x: int, y: int)
+  updateCampaignMacros(macros: List<MacroButtonProperties>)
+  updateGmMacros(macros: List<MacroButtonProperties>)
+  setTokenLocation(zoneGUID: GUID, keyToken: GUID, x: int, y: int)
+  exposePCArea(zoneGUID: GUID)
+  updateExposedAreaMeta(zoneGUID: GUID, tokenGUID: GUID,
+  clearExposedArea(zoneGUID: GUID, clear: bool)
+                        meta: ExposedAreaMetaData)
+
+Server → Client messages:
+  See ClientMethodHandler.
+  putAsset(Asset)
+  removeAsset(assetID: MD5Key)
+  startAssetTransfer(AssetHeader)
+  updateAssetTransfer(AssetChunk)
+  bootPlayer(playerName: String)
+  enforceZone(zoneGUID: GUID)
+  clearAllDrawings(zoneGUID: GUID, layer: Zone.Layer)
+  setZoneHasFoW(zoneGUID: GUID, hasFog: bool)
+  exposeFoW(zoneGUID: GUID, area: Area)
+  setFoW(zoneGUID: GUID, area: Area)
+  hideFoW(zoneGUID: GUID, area: Area)
+  setCampaign(campaign: Campaign)
+  setCampaignName(campaign: Campaign)
+  putZone(zone: Zone)
+  removeZone(zoneGUID: GUID)
+  editToken(zoneGUID: GUID, token: Token)
+  putToken(zoneGUID: GUID, token: Token)
+  putLabel(zoneGUID: GUID, label: Label)
+  updateTokenProperty(zoneGUID: GUID, tokenGUID: GUID, update: Token.Update,
+                      value: Variant)
+  removeToken(zoneGUID: GUID, tokenGUID: GUID)
+  removeTokens(zoneGUID: GUID, tokenGUIDs: List<GUID>)
+  removeLabel(zoneGUID: GUID, labelGUID: GUID)
+  enforceZoneView(zoneGUID: GUID, x: int, y: int, scale: double,
+                  gmWidth: int, gmHeight: int)
+  restoreZoneView(zoneGUID: GUID)
+  draw(zoneGUID: GUID, pen: Pen, drawable: Drawable)
+  updateDrawing(zoneGUID: GUID, pen: Pen, drawnElement: DrawnElement)
+  undoDraw(zoneGUID: GUID, drawableID: GUID)
+  setZoneVisibility(zoneGUID: GUID, visible: bool)
+  setZoneGridSize(zoneGUID: GUID, xOffset: int, yOffset: int,
+                  size: int, color: int)
+  playerConnected(player: Player)
+  playerDisconnected(player: Player)
+  message(message: TextMessage)
+  execFunction(target: String, source: String, functionName: String,
+               args: List<Object>)
+  execLink(link: String, target: String, source: String)
+  showPointer(player: String, pointer: Pointer)
+  hidePointer(player: String)
+  startTokenMove(playerId: String, zoneGUID: GUID, keyToken: GUID,
+                 selectedSet: Set<GUID>)
+  stopTokenMove(zoneGUID: GUID, keyToken: GUID)
+  updateTokenMove(zoneGUID: GUID, keyToken: GUID, x: int, y: int)
+  // only the "Table" player does this
+  setTokenLocation(zoneGUID: GUID, keyToken: GUID, x: int, y: int)
+  toggleTokenMoveWaypoint(zoneGUID: GUID, keyToken: GUID, zonePoint: ZonePoint)
+  setServerPolicy(policy: ServerPolicy)
+  addTopology(zoneGUID: GUID, area: Area, topologyMode: TopologyMode)
+  removeTopology(zoneGUID: GUID, area: Area, topologyMode: TopologyMode)
+  renameZone(zoneGUID: GUID, name: String)
+  updateCampaign(campaignProperties: CampaignProperties)
+  movePointer(player: String, x: int, y: int)
+  updateInitiative(list: InitiativeList, ownerPermission: bool)
+  updateTokenInitiative(zoneGUID: GUID, tokenGUID: GUID, isHolding: bool,
+                        state: String, index: int)
+  setUseVision(zoneGUID: GUID, visionType: VisionType)
+  setBoard(zoneGUID: GUID, mapID: MD5Key, x: int, y: int)
+  setUseVision(zoneGUID: GUID, visionType: VisionType)
+  updateCampaignMacros(macros: List<MacroButtonProperties>)
+  // if not adding then removing
+  setLiveTypingLabel(player: String, add: bool)
+  exposePCArea(zoneGUID: GUID)
+  enforceNotification(enforce: bool)
+  clearExposedArea(zoneGUID: GUID, clear: bool)
+  updateExposedAreaMeta(zoneGUID: GUID, tokenGUID: GUID,
+                        meta: ExposedAreaMetaData)

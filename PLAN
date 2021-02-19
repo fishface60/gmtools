@@ -1,0 +1,66 @@
+0.  Workspace
+
+    1.  Build-system to construct the different parts [ ]
+        See https://doc.rust-lang.org/cargo/reference/workspaces.html
+    2.  Replace make_index.sh with Rust code [ ]
+        See https://doc.rust-lang.org/cargo/reference/build-scripts.html
+
+1.  GCS Agent
+
+    Runs locally on the client to provide updates when GCS modifies the file
+    and update the file when modified elsewhere.
+
+    1.  Starts a websocket [x]
+    2.  Starts a filesystem watcher [x]
+    3.  Serves local client and starts it in a browser
+        with a reference to the websocket address [ ]
+    4.  When a client requests a file path be watched,
+        sends responses on change [x]
+    5.  Reads file after change events stop if it's still there [ ]
+    6.  Sends file name and contents to local client [ ]
+
+2.  GURPS GM Aid local client
+
+    Cross-platform UI for talking to GCS Agent,
+    for selecting GCS files and connecting to the Server.
+    For testing purposes and local changes for any features not in GCS
+    widgets are provided for both changes and a ping command.
+    If the file picker widget can have a reference to the file
+    and read the contents on-demand,
+    then degraded performance mode without writeback or changes might work.
+
+    1.  A blob of WASM with HTML envelope [x]
+    2.  Connects to the GCS Agent websocket [ ]
+    3.  Widget to ping Agent to ensure alive [ ]
+    4.  Provides File selection UI [ ]
+    5.  Send file path to GCS Agent [ ]
+    6.  Process returned file contents [ ]
+    7.  Widget to change HP/FP [ ]
+    8.  Widget to associate extended DR with GCS entities [ ]
+    9.  Widget to injure by applying damage [ ]
+    10. Provide widget to connect to Server [ ]
+
+3.  GURPS GM Aid Server
+
+    Performs logic for GURPS calculations,
+    provides an API for MapTool to synchronise attributes,
+    and a web UI to provide downloads for Agent/Client,
+    test connection to the agent,
+    and potentially abstract positioning.
+
+    TODO: What's the purpose of this,
+    MapTool could connect to local Client.
+
+    1.  Attempts to use PCP/UPnP to make ports available [ ]
+    2.  Discovers world-reachable address [ ]
+    3.  Negotiates SSL certificate from LetsEncrypt [ ]
+    4.  Serve websocket for local client to connect to [ ]
+    5.  Provide 
+
+4.  GCS Patch, add a watcher to open sheets and prompt to reload on change. [ ]
+5.  MapTool library token 
+    1.  Frame which takes token from Server to connect and sync sheet [ ]
+    2.  When opened by token owner,
+        frame receives push notifications from Server to sync [ ]
+    3.  Embed UI to damage character [ ]
+    4.  Send token position on move [ ]

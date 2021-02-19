@@ -1,0 +1,17 @@
+[package]
+name = "gcs-agent"
+version = "0.1.0"
+authors = ["Richard Maw <richard.maw@gmail.com>"]
+edition = "2018"
+default-run = "gcs-agent"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+notify = "5.0.0-pre.2"
+async-std = "*"
+futures = "0.3.*"
+
+[dependencies.async-tungstenite]
+version = "*"
+features = ["async-std-runtime"]
