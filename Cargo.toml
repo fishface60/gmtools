@@ -8,9 +8,13 @@ default-run = "gcs-agent"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-notify = "5.0.0-pre.2"
 async-std = "*"
 futures = "0.3.*"
+http-types = "2.10.*"
+notify = "5.0.0-pre.2"
+tide = "0.16"
+url = "2.2.*"
+webbrowser = "0.5.5"
 
 [dependencies.async-tungstenite]
 version = "*"

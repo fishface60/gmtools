@@ -4,16 +4,27 @@ use futures::{
     channel::mpsc::unbounded as unbounded_channel, prelude::*, select,
 };
 
-use async_std::{net::TcpListener, task::block_on};
+use async_std::{
+    net::{SocketAddr, TcpListener},
+    task,
+};
 use async_tungstenite::{
     accept_async,
     tungstenite::{protocol::Message, Error as TungsteniteError},
 };
 
+use http_types::mime;
+
 use notify::{
     event::Event as NotifyEvent, Error as NotifyError, RecommendedWatcher,
     RecursiveMode, Result as NotifyResult, Watcher,
 };
+
+use tide::{self, prelude::*, Response};
+
+use url::{self, Url};
+
+use webbrowser;
 
 #[derive(Debug)]
 enum GCSAgentError {
@@ -41,9 +52,17 @@ impl From<TungsteniteError> for GCSAgentError {
     }
 }
 
+async fn handle(_req: tide::Request<()>) -> tide::Result {
+    // TODO: Need to return this as an HTML document rather than text
+    Ok(Response::builder(200)
+        .body(include_str!(env!("WEBUI_HTML_PATH")))
+        .content_type(mime::HTML)
+        .build())
+}
+
 async fn run() -> Result<(), GCSAgentError> {
-    let listener = TcpListener::bind("127.0.0.1:0").await?;
-    let addr = listener.local_addr()?;
+    let ws_listener = TcpListener::bind("127.0.0.1:0").await?;
+    let ws_addr = ws_listener.local_addr()?;
 
     let (tx, mut rx) = unbounded_channel();
 
@@ -62,18 +81,63 @@ async fn run() -> Result<(), GCSAgentError> {
             }
         })?;
 
-    // TODO: Navigate to a page that connects to this socket.
-    println!("{}", addr);
+    let ws_stream = {
+        let mut http_server: tide::Server<()> = tide::new();
+        http_server.at("/").get(handle);
 
-    let ws_stream = loop {
-        let (stream, addr) = listener.accept().await?;
-        println!("Got peer connection from {}", addr);
+        let http_addr = SocketAddr::from(([127, 0, 0, 1], 0));
+        let mut http_listener = http_server.bind(http_addr).await?;
 
-        match accept_async(stream).await {
-            Ok(ws_stream) => break ws_stream,
-            Err(e) => println!("Peer failed to connect: {}", e),
-        };
+        let httpaddrs = http_listener.info().clone();
+
+        let launch = task::spawn(async move {
+            // TODO: Error handling for _why_ launch failed.
+            for httpaddr in httpaddrs {
+                let url = if let Ok(url) = Url::parse_with_params(
+                    &httpaddr.to_string(),
+                    &[("agentaddr", ws_addr.to_string())],
+                ) {
+                    url
+                } else {
+                    continue;
+                };
+
+                if let Ok(_) = webbrowser::open(&url.as_str()) {
+                    return true;
+                }
+            }
+            false
+        });
+
+        let mut launch_fused = launch.fuse();
+        let mut http_listener_accept_fused = http_listener.accept().fuse();
+        loop {
+            select! {
+                res = http_listener_accept_fused => {
+                    // We're expecting to drop this rather than it return.
+                    // If it did so, it was probably an error.
+                    // TODO: Replace with an Error value
+                    assert!(res.is_err());
+                },
+                launched = launch_fused => {
+                    // Launching can fail, and if it does we can't recover
+                    // TODO: Replace with an Error value
+                    assert!(launched);
+                },
+                // TODO: Should be some kind of iterator,
+                // so we can accept multiple.
+                res = ws_listener.accept().fuse() => {
+                    let (stream, addr) = res?;
+                    println!("Got peer connection from {}", addr);
+                    match accept_async(stream).await {
+                        Ok(ws_stream) => break ws_stream,
+                        Err(e) => println!("Peer failed to connect: {}", e),
+                    };
+                },
+            }
+        }
     };
+
     let (mut ws_writer, ws_reader) = ws_stream.split();
     let mut fused_socket_reader = ws_reader.fuse();
 
@@ -106,5 +170,5 @@ async fn run() -> Result<(), GCSAgentError> {
 }
 
 fn main() -> Result<(), GCSAgentError> {
-    block_on(run())
+    task::block_on(run())
 }
