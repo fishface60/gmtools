@@ -23,4 +23,3 @@ features = ["async-std-runtime"]
 [build-dependencies]
 base64 = "*"
 json = "*"
-wasm-pack = "*"

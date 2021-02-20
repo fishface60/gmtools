@@ -8,7 +8,4 @@ Development set-up
 ------------------
 
 Install rust of course.
-The webui component requires wasm-pack
-which is included as part of build-dependencies,
-but requires the system openssl at least transitively
-so libssl-dev may need to be installed.
+Install wasm-pack from cargo or https://rustwasm.github.io/wasm-pack/installer/
