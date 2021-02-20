@@ -1,3 +1,5 @@
+#![allow(clippy::single_component_path_imports)]
+
 use std::{env, fs, path::Path, process::Command};
 
 use base64;

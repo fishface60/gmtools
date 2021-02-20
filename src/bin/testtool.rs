@@ -1,30 +1,19 @@
-use std::env::args;
 use std::borrow::Cow;
+use std::env::args;
 
 use futures::{
-    SinkExt,
-    StreamExt,
-    select,
-    channel::mpsc::{
-        unbounded as unbounded_channel,
-        UnboundedSender,
-    },
+    channel::mpsc::{unbounded as unbounded_channel, UnboundedSender},
+    select, SinkExt, StreamExt,
 };
 
 use async_std::{
     io::stdin,
-    task::{
-        block_on,
-        spawn,
-    },
+    task::{block_on, spawn},
 };
 use async_tungstenite::{
     async_std::connect_async,
     tungstenite::protocol::{
-        frame::{
-            CloseFrame,
-            coding::CloseCode,
-        },
+        frame::{coding::CloseCode, CloseFrame},
         Message,
     },
 };
@@ -36,7 +25,8 @@ async fn read_stdin(tx: UnboundedSender<Message>) {
         if size == 0 {
             break;
         }
-        tx.unbounded_send(Message::Text(line.trim_end().to_string())).unwrap();
+        tx.unbounded_send(Message::Text(line.trim_end().to_string()))
+            .unwrap();
         line.truncate(0);
     }
 }

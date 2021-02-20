@@ -1,3 +1,5 @@
+#![allow(clippy::single_component_path_imports)]
+
 use std::io::Error as IOError;
 
 use futures::{
@@ -88,7 +90,7 @@ async fn run() -> Result<(), GCSAgentError> {
         let http_addr = SocketAddr::from(([127, 0, 0, 1], 0));
         let mut http_listener = http_server.bind(http_addr).await?;
 
-        let httpaddrs = http_listener.info().clone();
+        let httpaddrs = http_listener.info();
 
         let launch = task::spawn(async move {
             // TODO: Error handling for _why_ launch failed.
@@ -102,7 +104,7 @@ async fn run() -> Result<(), GCSAgentError> {
                     continue;
                 };
 
-                if let Ok(_) = webbrowser::open(&url.as_str()) {
+                if webbrowser::open(&url.as_str()).is_ok() {
                     return true;
                 }
             }
