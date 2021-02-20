@@ -94,7 +94,7 @@ fn main() {
         assert!(file.is_file());
     }
 
-    let html = format!("
+    let html = format!("\
         <html>
           <head>
           </head>
