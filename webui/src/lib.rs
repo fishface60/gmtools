@@ -49,25 +49,19 @@ impl Component for Model {
                 let window = if let Some(window) = web_sys::window() {
                     window
                 } else {
-                    ConsoleService::error(
-                        format!("Failed to get window object").as_str(),
-                    );
+                    ConsoleService::error("Failed to get window object");
                     return false;
                 };
                 let href = if let Ok(href) = window.location().href() {
                     href
                 } else {
-                    ConsoleService::error(
-                        format!("Failed to get window url").as_str(),
-                    );
+                    ConsoleService::error("Failed to get window url");
                     return false;
                 };
                 let url = if let Ok(url) = Url::parse(&href) {
                     url
                 } else {
-                    ConsoleService::error(
-                        format!("Window url failed to parse").as_str(),
-                    );
+                    ConsoleService::error("Window url failed to parse");
                     return false;
                 };
                 let mut agentaddr = None;
@@ -80,9 +74,7 @@ impl Component for Model {
                 let agentaddr = if let Some(agentaddr) = agentaddr {
                     agentaddr
                 } else {
-                    ConsoleService::error(
-                        format!("url did not include agentaddr").as_str(),
-                    );
+                    ConsoleService::error("url did not include agentaddr");
                     return false;
                 };
                 let ws_url = format!("ws://{}", agentaddr);
@@ -106,9 +98,7 @@ impl Component for Model {
                 {
                     self.agent_sock = Some(ws);
                 } else {
-                    ConsoleService::error(
-                        format!("Failed to connect to web socket").as_str(),
-                    );
+                    ConsoleService::error("Failed to connect to web socket");
                 };
                 false
             }
@@ -124,18 +114,14 @@ impl Component for Model {
             Msg::AgentSockConnected => {
                 if let Some(ws) = &mut self.agent_sock {
                     ws.send(Ok("src/main.rs".to_string()));
-                    ConsoleService::log(format!("Sent path to agent").as_str());
+                    ConsoleService::log("Sent path to agent");
                 } else {
-                    ConsoleService::error(
-                        format!("Agent socket dropped before connect").as_str(),
-                    );
+                    ConsoleService::error("Agent socket dropped before connect");
                 }
                 false
             }
             Msg::AgentSockDisconnected => {
-                ConsoleService::log(
-                    format!("Agent socket disconnected").as_str(),
-                );
+                ConsoleService::log("Agent socket disconnected");
                 self.agent_sock = None;
                 false
             }
