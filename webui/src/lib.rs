@@ -109,7 +109,7 @@ impl Component for Model {
                 if let Ok(ws) = WebSocketService::connect_binary(
                     &ws_url,
                     cbout,
-                    cbnot.into(),
+                    cbnot,
                 ) {
                     self.agent_sock = Some(ws);
                 } else {
@@ -127,7 +127,7 @@ impl Component for Model {
                     GCSAgentMessage::FileChange(ref path) => {
                         ConsoleService::log(path)
                     }
-                    _ => (),
+                    GCSAgentMessage::FileList(_) => (),
                 };
                 false
             }
