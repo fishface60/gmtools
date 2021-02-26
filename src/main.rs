@@ -28,6 +28,8 @@ use url::{self, Url};
 
 use webbrowser;
 
+use gmtool_common::GCSAgentMessage;
+
 #[derive(Debug)]
 enum GCSAgentError {
     IOError(IOError),
@@ -160,9 +162,12 @@ async fn run() -> Result<(), GCSAgentError> {
             },
             path = rx.next() => {
                 // TODO: Send both path and contents?
-                let resp = format!("{} changed",
-                                   path.unwrap().to_str().unwrap());
-                ws_writer.send(Message::Text(resp)).await?;
+                let resp = GCSAgentMessage::FileChange(path.unwrap().to_str().unwrap().to_string());
+                let serialised = bincode::serialize(&resp);
+                // TODO: Less silent serialise error.
+                if let Ok(bytes) = serialised {
+                    ws_writer.send(Message::Binary(bytes)).await?;
+                }
             },
             complete => break,
         }

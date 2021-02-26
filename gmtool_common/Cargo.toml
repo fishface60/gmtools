@@ -1,19 +1,10 @@
 [package]
-name = "webui"
+name = "gmtool-common"
 version = "0.1.0"
 authors = ["Richard Maw <richard.maw@gmail.com>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
-
 [dependencies]
-bincode = "*"
-gmtool-common = { path = "../gmtool_common" }
-url = "*"
-wasm-bindgen = "0.2"
-web-sys = "*"
-yew = "0.17.*"
+serde = { version = "1.0", features = ["derive"] }

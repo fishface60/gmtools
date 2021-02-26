@@ -5,11 +5,21 @@ authors = ["Richard Maw <richard.maw@gmail.com>"]
 edition = "2018"
 default-run = "gcs-agent"
 
+[workspace]
+members = [
+    "gmtool_common",
+]
+exclude = [
+    "webui"
+]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 async-std = "*"
+bincode = "*"
 futures = "0.3.*"
+gmtool-common = { path = "gmtool_common" }
 http-types = "2.10.*"
 notify = "5.0.0-pre.2"
 tide = "0.16"

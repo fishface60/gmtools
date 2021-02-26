@@ -1,4 +1,5 @@
 #![allow(clippy::single_component_path_imports)]
+#![recursion_limit = "512"]
 
 use url::Url;
 use wasm_bindgen::prelude::*;
@@ -11,6 +12,9 @@ use yew::{
     Component, ComponentLink, Html, ShouldRender,
 };
 
+extern crate gmtool_common;
+use gmtool_common::GCSAgentMessage;
+
 pub struct Model {
     agent_sock: Option<WebSocketTask>,
     clicked: bool,
@@ -20,7 +24,7 @@ pub struct Model {
 pub enum Msg {
     AgentSockConnected,
     AgentSockDisconnected,
-    AgentSockReceived(String),
+    AgentSockReceived(GCSAgentMessage),
     Click,
     Ignore,
     Init,
@@ -79,7 +83,16 @@ impl Component for Model {
                 };
                 let ws_url = format!("ws://{}", agentaddr);
                 let cbout = self.link.callback(|data| match data {
-                    Ok(data) => Msg::AgentSockReceived(data),
+                    Ok(data) => {
+                        let s: Vec<u8> = data;
+                        match bincode::deserialize(&s) {
+                            Ok(message) => Msg::AgentSockReceived(message),
+                            Err(e) => {
+                                ConsoleService::error(&format!("{}", e));
+                                Msg::Ignore
+                            }
+                        }
+                    }
                     _ => Msg::Ignore,
                 });
                 let cbnot = self.link.callback(|event| match event {
@@ -93,9 +106,11 @@ impl Component for Model {
                     }
                 });
 
-                if let Ok(ws) =
-                    WebSocketService::connect_text(&ws_url, cbout, cbnot.into())
-                {
+                if let Ok(ws) = WebSocketService::connect_binary(
+                    &ws_url,
+                    cbout,
+                    cbnot.into(),
+                ) {
                     self.agent_sock = Some(ws);
                 } else {
                     ConsoleService::error("Failed to connect to web socket");
@@ -107,8 +122,13 @@ impl Component for Model {
                 true
             }
             Msg::Ignore => false,
-            Msg::AgentSockReceived(s) => {
-                ConsoleService::info(&s);
+            Msg::AgentSockReceived(m) => {
+                match m {
+                    GCSAgentMessage::FileChange(ref path) => {
+                        ConsoleService::log(path)
+                    }
+                    _ => (),
+                };
                 false
             }
             Msg::AgentSockConnected => {
@@ -116,7 +136,9 @@ impl Component for Model {
                     ws.send(Ok("src/main.rs".to_string()));
                     ConsoleService::log("Sent path to agent");
                 } else {
-                    ConsoleService::error("Agent socket dropped before connect");
+                    ConsoleService::error(
+                        "Agent socket dropped before connect",
+                    );
                 }
                 false
             }

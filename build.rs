@@ -97,8 +97,11 @@ fn main() {
     }
 
     let html = format!("\
+        <!DOCTYPE html>
         <html>
           <head>
+            <meta charset='utf-8'/>
+            <meta name='viewport' content='width=device-width, initial-scale=1'/>
           </head>
           <body>
             <script id='wasm-bindgen' type='application/javascript;base64'>{wasm_bind}</script>
