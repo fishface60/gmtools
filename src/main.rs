@@ -4,16 +4,21 @@ use std::io::Error as IOError;
 
 use futures::{
     channel::mpsc::unbounded as unbounded_channel, prelude::*, select,
+    stream::SplitSink,
 };
 
 use async_std::{
-    net::{SocketAddr, TcpListener},
+    net::{SocketAddr, TcpListener, TcpStream},
+    path::PathBuf,
     task,
 };
 use async_tungstenite::{
     accept_async,
     tungstenite::{protocol::Message, Error as TungsteniteError},
+    WebSocketStream,
 };
+
+use bincode::{self, Error as BincodeError};
 
 use http_types::mime;
 
@@ -28,12 +33,14 @@ use url::{self, Url};
 
 use webbrowser;
 
-use gmtool_common::GCSAgentMessage;
+use gmtool_common::{FileEntry, GCSAgentMessage, WebUIMessage};
 
 #[derive(Debug)]
 enum GCSAgentError {
     IOError(IOError),
     NotifyError(NotifyError),
+    RequestWatchError(BincodeError),
+    SerializeError(Box<bincode::ErrorKind>),
     UnexpectedMessage(Message),
     WebSocketError(TungsteniteError),
 }
@@ -50,18 +57,108 @@ impl From<NotifyError> for GCSAgentError {
     }
 }
 
+impl From<Box<bincode::ErrorKind>> for GCSAgentError {
+    fn from(error: Box<bincode::ErrorKind>) -> Self {
+        GCSAgentError::SerializeError(error)
+    }
+}
+
 impl From<TungsteniteError> for GCSAgentError {
     fn from(error: TungsteniteError) -> Self {
         GCSAgentError::WebSocketError(error)
     }
 }
 
-async fn handle(_req: tide::Request<()>) -> tide::Result {
+async fn handle_http_request(_req: tide::Request<()>) -> tide::Result {
     // TODO: Need to return this as an HTML document rather than text
     Ok(Response::builder(200)
         .body(include_str!(env!("WEBUI_HTML_PATH")))
         .content_type(mime::HTML)
         .build())
+}
+
+enum DirSendError {
+    SendError(TungsteniteError),
+    SerializeError(Box<bincode::ErrorKind>),
+}
+
+impl From<DirSendError> for GCSAgentError {
+    fn from(error: DirSendError) -> Self {
+        match error {
+            DirSendError::SendError(e) => GCSAgentError::WebSocketError(e),
+            DirSendError::SerializeError(e) => GCSAgentError::SerializeError(e),
+        }
+    }
+}
+
+impl From<TungsteniteError> for DirSendError {
+    fn from(error: TungsteniteError) -> Self {
+        DirSendError::SendError(error)
+    }
+}
+
+impl From<Box<bincode::ErrorKind>> for DirSendError {
+    fn from(error: Box<bincode::ErrorKind>) -> Self {
+        DirSendError::SerializeError(error)
+    }
+}
+
+async fn get_dir_file_entries(
+    path: &PathBuf,
+) -> Result<Vec<FileEntry>, IOError> {
+    let mut entries: Vec<FileEntry> = Vec::new();
+    let mut dents = path.read_dir().await?;
+    while let Some(dirent) = dents.next().await {
+        let dirent = dirent?;
+        let metadata = dirent.metadata().await?;
+        let name = dirent.file_name();
+        if metadata.is_dir() {
+            match name.into_string() {
+                Ok(s) => entries.push(FileEntry::Directory(s)),
+                Err(_name) => (),
+            }
+            continue;
+        }
+        if metadata.is_file() {
+            match name.into_string() {
+                Ok(s) => {
+                    if s.ends_with(".gcs") {
+                        entries.push(FileEntry::GCSFile(s));
+                    }
+                }
+                Err(_name) => (),
+            }
+        }
+    }
+    Ok(entries)
+}
+
+async fn send_dir_gcs_files(
+    path: &PathBuf,
+    ws_writer: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
+) -> Result<(), DirSendError> {
+    let msg =
+        match get_dir_file_entries(path).await {
+            Ok(entries) => {
+                match path.to_str() {
+                    Some(s) => GCSAgentMessage::DirectoryChangeNotification(
+                        Ok((s.to_string(), entries)),
+                    ),
+                    None => {
+                        // Having no path is an acceptable thing to ignore,
+                        // so having an unencodable one should be too.
+                        return Ok(());
+                    }
+                }
+            }
+            Err(e) => GCSAgentMessage::DirectoryChangeNotification(Err(
+                format!("{:?}", e),
+            )),
+        };
+    ws_writer
+        .send(Message::Binary(bincode::serialize(&msg)?))
+        .await?;
+    Ok(())
 }
 
 async fn run() -> Result<(), GCSAgentError> {
@@ -87,7 +184,7 @@ async fn run() -> Result<(), GCSAgentError> {
 
     let ws_stream = {
         let mut http_server: tide::Server<()> = tide::new();
-        http_server.at("/").get(handle);
+        http_server.at("/").get(handle_http_request);
 
         let http_addr = SocketAddr::from(([127, 0, 0, 1], 0));
         let mut http_listener = http_server.bind(http_addr).await?;
@@ -145,6 +242,21 @@ async fn run() -> Result<(), GCSAgentError> {
     let (mut ws_writer, ws_reader) = ws_stream.split();
     let mut fused_socket_reader = ws_reader.fuse();
 
+    // Introduce ourself with current dir
+    let mut curdir: Option<PathBuf> = match std::env::current_dir() {
+        Ok(curdir) => Some(curdir.into()),
+        Err(_) => {
+            // TODO: Log current dir doesn't exist
+            // In the absence of a current directory
+            // hope client gives us an absolute path to work with.
+            None
+        }
+    };
+
+    if let Some(curdir) = &curdir {
+        send_dir_gcs_files(curdir, &mut ws_writer).await?;
+    }
+
     loop {
         select! {
             msg = fused_socket_reader.select_next_some() => {
@@ -152,17 +264,79 @@ async fn run() -> Result<(), GCSAgentError> {
                     Message::Close(_) => {
                         break;
                     },
-                    Message::Text(path) => {
-                        watcher.watch(path, RecursiveMode::Recursive)?;
+                    Message::Binary(bytes) => {
+                        let msg = match bincode::deserialize(&bytes) {
+                            Ok(msg) => msg,
+                            Err(e) => {
+                                println!("Err: {:?}", e);
+                                continue;
+                            }
+                        };
+                        match msg {
+                            WebUIMessage::RequestChDir(ref path) => {
+                                // Update current directory
+                                let chdir_result = if let Some(ref mut curdir) = curdir {
+                                    curdir.push(path);
+                                    Ok(())
+                                } else {
+                                    let pathbuf = PathBuf::from(path);
+                                    if pathbuf.is_absolute() {
+                                        curdir = Some(pathbuf);
+                                        Ok(())
+                                    } else {
+                                        let msg = format!("Couldn't chdir to {:?}, path is relative and have no current directory", path);
+                                        Err(msg)
+                                    }
+                                };
+
+                                let msg = GCSAgentMessage::RequestChDirResult(chdir_result);
+                                ws_writer.send(Message::binary(bincode::serialize(&msg)?)).await?;
+
+                                if let GCSAgentMessage::RequestChDirResult(chdir_result) = msg {
+                                    if chdir_result.is_err() {
+                                        continue;
+                                    }
+                                }
+
+                                if let Some(ref mut curdir) = curdir {
+                                    send_dir_gcs_files(&curdir, &mut ws_writer).await?;
+                                }
+                            }
+                            WebUIMessage::RequestWatch(path) => {
+                                let mut filepath = PathBuf::new();
+                                if let Some(ref curdir) = curdir {
+                                    filepath.push(curdir);
+                                }
+                                filepath.push(path);
+                                if filepath.is_relative() {
+                                    println!("Can't request relative path {:?}", filepath);
+                                    continue;
+                                }
+                                let res = match watcher.watch(filepath, RecursiveMode::Recursive) {
+                                    Ok(_) => Ok(()),
+                                    Err(e) => Err(format!("{:?}", e)),
+                                };
+                                // TODO: Send both path and contents?
+                                let resp = GCSAgentMessage::RequestWatchResult(res);
+                                match bincode::serialize(&resp) {
+                                    Ok(bytes) => {
+                                        ws_writer.send(Message::Binary(bytes)).await?
+                                    }
+                                    Err(e) => {
+                                        return Err(GCSAgentError::RequestWatchError(e));
+                                    }
+                                }
+                            }
+                        }
                     }
                     msg => {
                         return Err(GCSAgentError::UnexpectedMessage(msg));
-                    },
+                    }
                 }
             },
             path = rx.next() => {
                 // TODO: Send both path and contents?
-                let resp = GCSAgentMessage::FileChange(path.unwrap().to_str().unwrap().to_string());
+                let resp = GCSAgentMessage::FileChangeNotification(path.unwrap().to_str().unwrap().to_string());
                 let serialised = bincode::serialize(&resp);
                 // TODO: Less silent serialise error.
                 if let Ok(bytes) = serialised {
