@@ -161,6 +161,101 @@ async fn send_dir_gcs_files(
     Ok(())
 }
 
+// TODO: When std::ops::ControlFlow leaves nightly, use that
+enum ControlFlow {
+    Continue,
+    Break,
+}
+
+async fn handle_socket_message(
+    msg: Result<Message, TungsteniteError>,
+    curdir: &mut Option<PathBuf>,
+    ws_writer: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
+    watcher: &mut RecommendedWatcher,
+) -> Result<ControlFlow, GCSAgentError> {
+    match msg? {
+        Message::Close(_) => Ok(ControlFlow::Break),
+        Message::Binary(bytes) => {
+            let msg = match bincode::deserialize(&bytes) {
+                Ok(msg) => msg,
+                Err(e) => {
+                    println!("Err: {:?}", e);
+                    return Ok(ControlFlow::Continue);
+                }
+            };
+            match msg {
+                WebUIMessage::RequestChDir(ref path) => {
+                    // Update current directory
+                    let chdir_result = if let Some(ref mut curdir) = curdir {
+                        curdir.push(path);
+                        Ok(())
+                    } else {
+                        let pathbuf = PathBuf::from(path);
+                        if pathbuf.is_absolute() {
+                            *curdir = Some(pathbuf);
+                            Ok(())
+                        } else {
+                            let msg = format!("Couldn't chdir to {:?}, \
+                                               path is relative and have no \
+                                               current directory", path);
+                            Err(msg)
+                        }
+                    };
+
+                    let msg = GCSAgentMessage::RequestChDirResult(chdir_result);
+                    ws_writer
+                        .send(Message::binary(bincode::serialize(&msg)?))
+                        .await?;
+
+                    if let GCSAgentMessage::RequestChDirResult(chdir_result) =
+                        msg
+                    {
+                        if chdir_result.is_err() {
+                            return Ok(ControlFlow::Continue);
+                        }
+                    }
+
+                    if let Some(ref mut curdir) = curdir {
+                        send_dir_gcs_files(&curdir, ws_writer).await?;
+                    }
+                    Ok(ControlFlow::Continue)
+                }
+                WebUIMessage::RequestWatch(path) => {
+                    let mut filepath = PathBuf::new();
+                    if let Some(ref curdir) = curdir {
+                        filepath.push(curdir);
+                    }
+                    filepath.push(path);
+                    if filepath.is_relative() {
+                        println!("Can't request relative path {:?}", filepath);
+                        return Ok(ControlFlow::Continue);
+                    }
+                    let res = match watcher
+                        .watch(filepath, RecursiveMode::Recursive)
+                    {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(format!("{:?}", e)),
+                    };
+                    // TODO: Send both path and contents?
+                    let resp = GCSAgentMessage::RequestWatchResult(res);
+                    match bincode::serialize(&resp) {
+                        Ok(bytes) => {
+                            ws_writer.send(Message::Binary(bytes)).await?;
+                            Ok(ControlFlow::Continue)
+                        }
+                        Err(e) => {
+                            return Err(GCSAgentError::RequestWatchError(e));
+                        }
+                    }
+                }
+            }
+        }
+        msg => {
+            return Err(GCSAgentError::UnexpectedMessage(msg));
+        }
+    }
+}
+
 async fn run() -> Result<(), GCSAgentError> {
     let ws_listener = TcpListener::bind("127.0.0.1:0").await?;
     let ws_addr = ws_listener.local_addr()?;
@@ -260,78 +355,10 @@ async fn run() -> Result<(), GCSAgentError> {
     loop {
         select! {
             msg = fused_socket_reader.select_next_some() => {
-                match msg? {
-                    Message::Close(_) => {
-                        break;
-                    },
-                    Message::Binary(bytes) => {
-                        let msg = match bincode::deserialize(&bytes) {
-                            Ok(msg) => msg,
-                            Err(e) => {
-                                println!("Err: {:?}", e);
-                                continue;
-                            }
-                        };
-                        match msg {
-                            WebUIMessage::RequestChDir(ref path) => {
-                                // Update current directory
-                                let chdir_result = if let Some(ref mut curdir) = curdir {
-                                    curdir.push(path);
-                                    Ok(())
-                                } else {
-                                    let pathbuf = PathBuf::from(path);
-                                    if pathbuf.is_absolute() {
-                                        curdir = Some(pathbuf);
-                                        Ok(())
-                                    } else {
-                                        let msg = format!("Couldn't chdir to {:?}, path is relative and have no current directory", path);
-                                        Err(msg)
-                                    }
-                                };
-
-                                let msg = GCSAgentMessage::RequestChDirResult(chdir_result);
-                                ws_writer.send(Message::binary(bincode::serialize(&msg)?)).await?;
-
-                                if let GCSAgentMessage::RequestChDirResult(chdir_result) = msg {
-                                    if chdir_result.is_err() {
-                                        continue;
-                                    }
-                                }
-
-                                if let Some(ref mut curdir) = curdir {
-                                    send_dir_gcs_files(&curdir, &mut ws_writer).await?;
-                                }
-                            }
-                            WebUIMessage::RequestWatch(path) => {
-                                let mut filepath = PathBuf::new();
-                                if let Some(ref curdir) = curdir {
-                                    filepath.push(curdir);
-                                }
-                                filepath.push(path);
-                                if filepath.is_relative() {
-                                    println!("Can't request relative path {:?}", filepath);
-                                    continue;
-                                }
-                                let res = match watcher.watch(filepath, RecursiveMode::Recursive) {
-                                    Ok(_) => Ok(()),
-                                    Err(e) => Err(format!("{:?}", e)),
-                                };
-                                // TODO: Send both path and contents?
-                                let resp = GCSAgentMessage::RequestWatchResult(res);
-                                match bincode::serialize(&resp) {
-                                    Ok(bytes) => {
-                                        ws_writer.send(Message::Binary(bytes)).await?
-                                    }
-                                    Err(e) => {
-                                        return Err(GCSAgentError::RequestWatchError(e));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    msg => {
-                        return Err(GCSAgentError::UnexpectedMessage(msg));
-                    }
+                match handle_socket_message(msg, &mut curdir, &mut ws_writer,
+                                            &mut watcher).await? {
+                    ControlFlow::Continue => continue,
+                    ControlFlow::Break => break,
                 }
             },
             path = rx.next() => {
