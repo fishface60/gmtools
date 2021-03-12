@@ -1,6 +1,10 @@
 #![allow(clippy::single_component_path_imports, clippy::large_enum_variant)]
 #![recursion_limit = "512"]
 
+mod navlist;
+mod sheetlist;
+mod weakcomponentlink;
+
 use url::Url;
 use wasm_bindgen::prelude::*;
 use web_sys::{
@@ -16,12 +20,17 @@ use yew::{
 };
 
 use gmtool_common::{FileEntry, GCSAgentMessage, GCSFile, WebUIMessage};
+use navlist::CharacterSheetLinkList;
+use sheetlist::CharacterSheetList;
+use weakcomponentlink::WeakComponentLink;
 
 pub struct Model {
     agent_sock: Option<WebSocketTask>,
     dir_path_element: NodeRef,
     entries_element: NodeRef,
     link: ComponentLink<Self>,
+    links_list_element: WeakComponentLink<CharacterSheetLinkList>,
+    sheets_list_element: WeakComponentLink<CharacterSheetList>,
 }
 
 pub enum Msg {
@@ -44,6 +53,10 @@ impl Component for Model {
             dir_path_element: NodeRef::default(),
             entries_element: NodeRef::default(),
             link,
+            links_list_element:
+                WeakComponentLink::<CharacterSheetLinkList>::default(),
+            sheets_list_element:
+                WeakComponentLink::<CharacterSheetList>::default(),
         }
     }
 
@@ -138,6 +151,10 @@ impl Component for Model {
                                 file: contents,
                             }) => (path, contents),
                         };
+                        let links_list =
+                            self.links_list_element.borrow().clone().unwrap();
+                        let sheets_list =
+                            self.sheets_list_element.borrow().clone().unwrap();
                         let character = match contents {
                             gcs::FileKind::Character(
                                 gcs::character::Character::V1(character),
@@ -147,6 +164,10 @@ impl Component for Model {
                                 return false;
                             }
                         };
+                        links_list.send_message(
+                            <CharacterSheetLinkList as Component>::Message::SheetAdded(character.profile.name.clone()));
+                        sheets_list.send_message(
+                            <CharacterSheetList as Component>::Message::SheetAdded(path, character));
                     }
                     GCSAgentMessage::RequestWatchResult(result) => {
                         if let Err(text) = result {
@@ -308,41 +329,74 @@ impl Component for Model {
     }
 
     fn view(&self) -> Html {
+        let sheets: Vec<(String, gcs::character::CharacterV1)> = vec![];
         html! {
-            <div>
-                <table>
-                  <tr>
-                    <th>{"Directory"}</th>
-                    <td>
-                      <form
-                       onsubmit=self.link.callback(|evt: FocusEvent| {
-                         evt.prevent_default();
-                         ConsoleService::info(&"Submit");
-                         Msg::DirectoryPathSubmitted
-                       })>
-                        <input ref=self.dir_path_element.clone()/>
-                      </form>
-                    </td>
-                  </tr>
-                  <tr>
-                    <th>{"Entries"}</th>
-                    <td>
-                      <select ref=self.entries_element.clone()  multiple=true
-                       style="width: 100%;"
-                       onchange=self.link.callback(|evt: ChangeData| match evt {
-                         ChangeData::Select(ref select_element) => {
-                             ConsoleService::info(&format!("{:?}", evt));
-                             ConsoleService::info(&format!("{:?}", select_element.value()));
-                             let entry = serde_json::from_str(&select_element.value()).unwrap();
-                             Msg::DirectoryEntrySelected(entry)
-                         }
-                         _ => Msg::Ignore
-                       })>
-                      </select>
-                    </td>
-                  </tr>
-                </table>
+          <>
+            <div id="nav">
+              <h1>{"Navigation"}</h1>
+              <ul>
+                // TODO: There must be something to automate a sitemap
+                <li><a href="#nav">{"Navigations"}</a></li>
+                <li>
+                  <a href="#sheets">{"Character Sheets"}</a>
+                  <ul id="nav-sheets">
+                  <CharacterSheetLinkList
+                   link_prefix="sheets-"
+                   names=sheets.iter().map(|(name, _)| {
+                       name.clone()
+                   }).collect::<Vec<String>>()
+                   weak_link=&self.links_list_element
+                  />
+                  </ul>
+                </li>
+                <li><a href="#file-browser">{"File Browser"}</a></li>
+              </ul>
             </div>
+            <div id="sheets">
+              <h1>{"Character Sheets"}</h1>
+              <CharacterSheetList
+               character_sheets=sheets,
+               link_prefix="sheets-"
+               weak_link=&self.sheets_list_element/>
+            </div>
+            <div id="file-browser">
+              <h1>{"File Browser"}</h1>
+              <table>
+                <tr>
+                  <th>{"Directory"}</th>
+                  <td>
+                    <form
+                     onsubmit=self.link.callback(|evt: FocusEvent| {
+                       evt.prevent_default();
+                       ConsoleService::info(&"Submit");
+                       Msg::DirectoryPathSubmitted
+                     })>
+                      <input ref=self.dir_path_element.clone()/>
+                    </form>
+                  </td>
+                </tr>
+                <tr>
+                  <th>{"Entries"}</th>
+                  <td>
+                    <select ref=self.entries_element.clone()  multiple=true
+                     style="width: 100%;"
+                     onchange=self.link.callback(|evt: ChangeData| match evt {
+                       ChangeData::Select(ref select_element) => {
+                           ConsoleService::info(&format!("{:?}", evt));
+                           ConsoleService::info(
+                               &format!("{:?}", select_element.value()));
+                           let entry = serde_json::from_str(
+                               &select_element.value()).unwrap();
+                           Msg::DirectoryEntrySelected(entry)
+                       }
+                       _ => Msg::Ignore
+                     })>
+                    </select>
+                  </td>
+                </tr>
+              </table>
+            </div>
+          </>
         }
     }
 }
