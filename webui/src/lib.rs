@@ -1,4 +1,4 @@
-#![allow(clippy::single_component_path_imports)]
+#![allow(clippy::single_component_path_imports, clippy::large_enum_variant)]
 #![recursion_limit = "512"]
 
 use url::Url;
@@ -15,7 +15,7 @@ use yew::{
     ChangeData, Component, ComponentLink, Html, NodeRef, ShouldRender,
 };
 
-use gmtool_common::{FileEntry, GCSAgentMessage, WebUIMessage};
+use gmtool_common::{FileEntry, GCSAgentMessage, GCSFile, WebUIMessage};
 
 pub struct Model {
     agent_sock: Option<WebSocketTask>,
@@ -120,22 +120,50 @@ impl Component for Model {
                 false
             }
             Msg::AgentSockReceived(m) => {
-                ConsoleService::debug(&format!("Socket message {:?}", m));
-                match &m {
+                ConsoleService::debug(&format!("Socket message {:?}", &m));
+                match m {
                     GCSAgentMessage::RequestChDirResult(result) => {
-                        ConsoleService::debug(&format!("{:?}", m));
                         if let Err(text) = result {
                             ConsoleService::error(&text);
                         }
                     }
+                    GCSAgentMessage::RequestSheetContentsResult(result) => {
+                        let (path, contents) = match result {
+                            Err(text) => {
+                                ConsoleService::error(&text);
+                                return false;
+                            }
+                            Ok(GCSFile {
+                                path,
+                                file: contents,
+                            }) => (path, contents),
+                        };
+                        let character = match contents {
+                            gcs::FileKind::Character(
+                                gcs::character::Character::V1(character),
+                            ) => character,
+                            _ => {
+                                ConsoleService::error("File not V1 character");
+                                return false;
+                            }
+                        };
+                    }
                     GCSAgentMessage::RequestWatchResult(result) => {
-                        ConsoleService::debug(&format!("{:?}", m));
                         if let Err(text) = result {
                             ConsoleService::error(&text);
                         }
                     }
                     GCSAgentMessage::FileChangeNotification(path) => {
                         ConsoleService::log(&path);
+                        let ws = self.agent_sock.as_mut().unwrap();
+                        match bincode::serialize(
+                            &WebUIMessage::RequestSheetContents(path),
+                        ) {
+                            Ok(bytes) => ws.send_binary(Ok(bytes)),
+                            Err(e) => {
+                                ConsoleService::error(&format!("{:?}", e))
+                            }
+                        }
                     }
                     GCSAgentMessage::DirectoryChangeNotification(msg) => {
                         match msg {
@@ -231,17 +259,22 @@ impl Component for Model {
                     );
                     return false;
                 };
-                let msg = match entry {
+                let msgs = match entry {
                     FileEntry::Directory(path) => {
-                        WebUIMessage::RequestChDir(path)
+                        vec![WebUIMessage::RequestChDir(path)]
                     }
                     FileEntry::GCSFile(path) => {
-                        WebUIMessage::RequestWatch(path)
+                        vec![
+                            WebUIMessage::RequestWatch(path.clone()),
+                            WebUIMessage::RequestSheetContents(path),
+                        ]
                     }
                 };
-                match bincode::serialize(&msg) {
-                    Ok(bytes) => ws.send_binary(Ok(bytes)),
-                    Err(e) => ConsoleService::error(&format!("{:?}", e)),
+                for msg in msgs {
+                    match bincode::serialize(&msg) {
+                        Ok(bytes) => ws.send_binary(Ok(bytes)),
+                        Err(e) => ConsoleService::error(&format!("{:?}", e)),
+                    }
                 }
                 false
             }

@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 bincode = "*"
+gcs = { path = "../gcs" }
 gmtool-common = { path = "../gmtool_common" }
 serde_json = "*"
 url = "*"

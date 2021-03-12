@@ -8,6 +8,7 @@ use futures::{
 };
 
 use async_std::{
+    fs,
     net::{SocketAddr, TcpListener, TcpStream},
     path::PathBuf,
     task,
@@ -33,7 +34,7 @@ use url::{self, Url};
 
 use webbrowser;
 
-use gmtool_common::{FileEntry, GCSAgentMessage, WebUIMessage};
+use gmtool_common::{FileEntry, GCSAgentMessage, GCSFile, WebUIMessage};
 
 #[derive(Debug)]
 enum GCSAgentError {
@@ -161,6 +162,40 @@ async fn send_dir_gcs_files(
     Ok(())
 }
 
+async fn send_sheet_contents(
+    path: String,
+    ws_writer: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
+) -> Result<(), GCSAgentError> {
+    let result = match fs::read_to_string(&path)
+        .await
+        .as_ref()
+        .map(String::as_str)
+        .map(serde_json::from_str::<gcs::FileKind>)
+    {
+        Ok(Ok(contents)) => Ok(GCSFile {
+            path,
+            file: contents,
+        }),
+        Ok(Err(e)) => {
+            let msg = format!("Couldn't parse sheet: {:?}", e);
+            eprintln!("{}", msg);
+            Err(msg)
+        }
+        Err(e) => {
+            let msg = format!("Couldn't read sheet: {:?}", e);
+            eprintln!("{}", msg);
+            Err(msg)
+        }
+    };
+    let m = GCSAgentMessage::RequestSheetContentsResult(result);
+    ws_writer
+        .send(Message::binary(
+            bincode::serialize(&m).expect("serialize message"),
+        ))
+        .await?;
+    Ok(())
+}
+
 // TODO: When std::ops::ControlFlow leaves nightly, use that
 enum ControlFlow {
     Continue,
@@ -220,6 +255,10 @@ async fn handle_socket_message(
                     }
                     Ok(ControlFlow::Continue)
                 }
+                WebUIMessage::RequestSheetContents(path) => {
+                    send_sheet_contents(path, ws_writer).await?;
+                    Ok(ControlFlow::Continue)
+                }
                 WebUIMessage::RequestWatch(path) => {
                     let mut filepath = PathBuf::new();
                     if let Some(ref curdir) = curdir {
@@ -236,7 +275,6 @@ async fn handle_socket_message(
                         Ok(_) => Ok(()),
                         Err(e) => Err(format!("{:?}", e)),
                     };
-                    // TODO: Send both path and contents?
                     let resp = GCSAgentMessage::RequestWatchResult(res);
                     match bincode::serialize(&resp) {
                         Ok(bytes) => {

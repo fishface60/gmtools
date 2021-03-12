@@ -20,9 +20,11 @@ exclude = [
 async-std = "*"
 bincode = "*"
 futures = "0.3.*"
+gcs = { path = "gcs" }
 gmtool-common = { path = "gmtool_common" }
 http-types = "2.10.*"
 notify = "5.0.0-pre.2"
+serde_json = "*"
 tide = "0.16"
 url = "2.2.*"
 webbrowser = "0.5.5"
