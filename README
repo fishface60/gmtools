@@ -10,13 +10,34 @@ MapTool constraints
 
 1.  MapTool can only make blocking HTTP GET requests
     that lock up the interface while ongoing.
-2.  MapTool 1.8 can have UI elements make requests to run Macros,
-    and macros may execute code in UI elements, so requests are possible.
-3.  MapTool script is unwieldy and JavaScript is better, but still not nice,
-    so code in it should be kept to a minimum.
-4.  Notifications of changes can only happen from other clients,
-    so actions must be driven by the UI and broadcast to the connected user
-    who owns the character sheet.
+2.  The best avenue for automation may be a bot that connects
+    and speaks the MapTool protocol.
+3.  User interface needs to be hand-coded,
+    but can possibly operate by whispering messages to a bot.
+4.  It is theoretically possible to have the bridge work
+    by MapTool connect through it and update stats via MITM,
+    which would have the benefit of not having a separate bot connection
+    but would cause architectural problems if it got perfect E2E encryption.
+
+Browser constraints
+-------------------
+
+1.  If at all possible, work with a static page.
+2.  Must be able to connect to local services.
+    1.  HTTPS is not possible as browsers refuse to accept self-signed certs
+        we can't get a certificate for 127.0.0.1
+        and setting up a local certification authority is a pain to integrate.
+    2.  We need local services to not open up vulnerabilities
+        from arbitrary pages being able to connect.
+        COBR is the intended mechanism for this, but websockets don't handle it,
+        and the official stance from browser upstreams is that websocket auth
+        should be the responsibility of the application layer protocol,
+        and rolling one's own security is prone to error.
+        This limits the browser to HTTP requests and server-sent-events.
+    3.  For file or localhost pages to make connections to local services
+        COBR requires that the server return "*" since file origin is null.
+        Authentication is required to prevent other services accessing,
+        but at least it's an existing problem.
 
 Design constraints
 ------------------
@@ -24,10 +45,6 @@ Design constraints
 Must be cross platform,
 so cross-compile to Windows with mingw-w64,
 and use a web UI.
-
-Do we either:
-1.  Export a HTTP API for use by both MapTool and the UI, or
-2.  Implement a MapTool client that can synchronise
 
 
 GCS file update:
@@ -41,3 +58,25 @@ GCS ← Agent → MapTool Bridge → MapTool
 Apply change in MapTool
 
 GCS ← Agent ← MapTool Bridge ← MapTool
+
+Components
+==========
+
+gcs-agent
+---------
+
+1.  Provide browsing API for GCS files.
+2.  Allow the contents of a GCS file to be requested.
+3.  Send notifications when files are changed.
+
+webui
+-----
+
+1.  Do everything to aid in-person games that GCS doesn't do.
+    1.  HP/FP/ER tracking.
+    2.  Apply damage from hits.
+    3.  Track modifiers for roll targets.
+2.  A vehicle for prototyping features far GCS.
+    1.  Need to track more complex DR.
+    2.  Need to encode which of alternative abilities are active.
+3.  Provide interface for configuring other components.
