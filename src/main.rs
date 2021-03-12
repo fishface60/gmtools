@@ -1,6 +1,9 @@
 #![allow(clippy::single_component_path_imports)]
 
-use std::io::Error as IOError;
+use std::{
+    io::Error as IOError,
+    net::{Ipv4Addr, SocketAddrV4},
+};
 
 use futures::{
     channel::mpsc::unbounded as unbounded_channel, prelude::*, select,
@@ -295,7 +298,9 @@ async fn handle_socket_message(
 }
 
 async fn run() -> Result<(), GCSAgentError> {
-    let ws_listener = TcpListener::bind("127.0.0.1:0").await?;
+    let ws_listener =
+        TcpListener::bind(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 0))
+            .await?;
     let ws_addr = ws_listener.local_addr()?;
 
     let (tx, mut rx) = unbounded_channel();
