@@ -202,7 +202,9 @@ impl Component for Model {
                                         FileEntry::GCSFile(ref name) => {
                                             let option =
                                                 HtmlOptionElement::new_with_text_and_value(
-                                                    name, &serde_json::to_string(&entry).unwrap(),
+                                                    name,
+                                                    &serde_json::to_string(
+                                                        &entry).unwrap(),
                                                 )
                                                 .unwrap();
                                             entries_element
@@ -221,7 +223,9 @@ impl Component for Model {
                                             text.push('/');
                                             let option =
                                                 HtmlOptionElement::new_with_text_and_value(
-                                                    &text, &serde_json::to_string(&entry).unwrap(),
+                                                    &text,
+                                                    &serde_json::to_string(
+                                                        &entry).unwrap(),
                                                 )
                                                 .unwrap();
                                             entries_element

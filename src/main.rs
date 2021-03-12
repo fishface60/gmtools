@@ -217,7 +217,7 @@ async fn handle_socket_message(
             let msg = match bincode::deserialize(&bytes) {
                 Ok(msg) => msg,
                 Err(e) => {
-                    println!("Err: {:?}", e);
+                    eprintln!("Err: {:?}", e);
                     return Ok(ControlFlow::Continue);
                 }
             };
@@ -233,9 +233,13 @@ async fn handle_socket_message(
                             *curdir = Some(pathbuf);
                             Ok(())
                         } else {
-                            let msg = format!("Couldn't chdir to {:?}, \
-                                               path is relative and have no \
-                                               current directory", path);
+                            let msg = format!(
+                                "Couldn't chdir to {:?}, \
+                                 path is relative and have no \
+                                 current directory",
+                                path
+                            );
+                            eprintln!("{}", msg);
                             Err(msg)
                         }
                     };
@@ -269,7 +273,7 @@ async fn handle_socket_message(
                     }
                     filepath.push(path);
                     if filepath.is_relative() {
-                        println!("Can't request relative path {:?}", filepath);
+                        eprintln!("Can't request relative path {:?}", filepath);
                         return Ok(ControlFlow::Continue);
                     }
                     let res = match watcher
@@ -312,7 +316,7 @@ async fn run() -> Result<(), GCSAgentError> {
             // when this callback doesn't have a Result return type?
             let event = res.unwrap();
             for path in event.paths {
-                println!(
+                eprintln!(
                     "Got notify event on path: {}",
                     path.to_str().unwrap()
                 );
@@ -370,7 +374,7 @@ async fn run() -> Result<(), GCSAgentError> {
                     println!("Got peer connection from {}", addr);
                     match accept_async(stream).await {
                         Ok(ws_stream) => break ws_stream,
-                        Err(e) => println!("Peer failed to connect: {}", e),
+                        Err(e) => eprintln!("Peer failed to connect: {}", e),
                     };
                 },
             }
