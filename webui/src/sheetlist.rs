@@ -4,12 +4,14 @@ use yew::{
     self, html, Component, ComponentLink, Html, Properties, ShouldRender,
 };
 
+use gmtool_common::PortableOsString;
+
 use crate::weakcomponentlink::WeakComponentLink;
 
 #[derive(Clone, PartialEq, Properties)]
 pub struct Props {
     #[prop_or_default]
-    pub character_sheets: Vec<(String, gcs::character::CharacterV1)>,
+    pub character_sheets: Vec<(PortableOsString, gcs::character::CharacterV1)>,
     #[prop_or_default]
     pub link_prefix: String,
     #[prop_or_default]
@@ -21,7 +23,7 @@ pub struct CharacterSheetList {
 }
 
 pub enum Msg {
-    SheetAdded(String, gcs::character::CharacterV1),
+    SheetAdded(PortableOsString, gcs::character::CharacterV1),
 }
 
 impl Component for CharacterSheetList {

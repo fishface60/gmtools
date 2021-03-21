@@ -1,114 +1,60 @@
 #![allow(clippy::single_component_path_imports)]
 
 use std::{
+    collections::{hash_map::Entry, HashMap},
+    convert::{TryFrom, TryInto},
+    error::Error,
+    ffi::OsString,
     io::Error as IOError,
-    net::{Ipv4Addr, SocketAddrV4},
+    path::PathBuf,
 };
 
 use futures::{
-    channel::mpsc::unbounded as unbounded_channel, prelude::*, select,
-    stream::SplitSink,
+    channel::mpsc::{
+        unbounded as unbounded_channel, UnboundedReceiver as Receiver,
+        UnboundedSender as Sender,
+    },
+    prelude::*,
+    select,
+    stream::StreamExt,
 };
 
 use async_std::{
     fs,
-    net::{SocketAddr, TcpListener, TcpStream},
-    path::PathBuf,
+    net::SocketAddr,
+    path::PathBuf as AsyncPathBuf,
+    sync::{Arc, Mutex},
     task,
 };
-use async_tungstenite::{
-    accept_async,
-    tungstenite::{protocol::Message, Error as TungsteniteError},
-    WebSocketStream,
-};
 
-use bincode::{self, Error as BincodeError};
+use bincode;
 
 use http_types::mime;
 
 use notify::{
-    event::Event as NotifyEvent, Error as NotifyError, RecommendedWatcher,
-    RecursiveMode, Result as NotifyResult, Watcher,
+    event::Event as NotifyEvent, RecommendedWatcher, RecursiveMode,
+    Result as NotifyResult, Watcher,
 };
 
-use tide::{self, prelude::*, Response};
+use tide::{
+    self, listener::ListenInfo, prelude::*, sse::Sender as SSESender, Response,
+};
 
 use url::{self, Url};
 
 use webbrowser;
 
-use gmtool_common::{FileEntry, GCSAgentMessage, GCSFile, WebUIMessage};
+use gmtool_common::{FileEntry, PortableOsString};
 
-#[derive(Debug)]
-enum GCSAgentError {
-    IOError(IOError),
-    NotifyError(NotifyError),
-    RequestWatchError(BincodeError),
-    SerializeError(Box<bincode::ErrorKind>),
-    UnexpectedMessage(Message),
-    WebSocketError(TungsteniteError),
-}
-
-impl From<IOError> for GCSAgentError {
-    fn from(error: IOError) -> Self {
-        GCSAgentError::IOError(error)
-    }
-}
-
-impl From<NotifyError> for GCSAgentError {
-    fn from(error: NotifyError) -> Self {
-        GCSAgentError::NotifyError(error)
-    }
-}
-
-impl From<Box<bincode::ErrorKind>> for GCSAgentError {
-    fn from(error: Box<bincode::ErrorKind>) -> Self {
-        GCSAgentError::SerializeError(error)
-    }
-}
-
-impl From<TungsteniteError> for GCSAgentError {
-    fn from(error: TungsteniteError) -> Self {
-        GCSAgentError::WebSocketError(error)
-    }
-}
-
-async fn handle_http_request(_req: tide::Request<()>) -> tide::Result {
-    // TODO: Need to return this as an HTML document rather than text
+async fn get_webui(_req: tide::Request<()>) -> tide::Result {
     Ok(Response::builder(200)
         .body(include_str!(env!("WEBUI_HTML_PATH")))
         .content_type(mime::HTML)
         .build())
 }
 
-enum DirSendError {
-    SendError(TungsteniteError),
-    SerializeError(Box<bincode::ErrorKind>),
-}
-
-impl From<DirSendError> for GCSAgentError {
-    fn from(error: DirSendError) -> Self {
-        match error {
-            DirSendError::SendError(e) => GCSAgentError::WebSocketError(e),
-            DirSendError::SerializeError(e) => GCSAgentError::SerializeError(e),
-        }
-    }
-}
-
-impl From<TungsteniteError> for DirSendError {
-    fn from(error: TungsteniteError) -> Self {
-        DirSendError::SendError(error)
-    }
-}
-
-impl From<Box<bincode::ErrorKind>> for DirSendError {
-    fn from(error: Box<bincode::ErrorKind>) -> Self {
-        DirSendError::SerializeError(error)
-    }
-}
-
 async fn get_dir_file_entries(
-    path: &PathBuf,
+    path: &AsyncPathBuf,
 ) -> Result<Vec<FileEntry>, IOError> {
     let mut entries: Vec<FileEntry> = Vec::new();
     let mut dents = path.read_dir().await?;
@@ -117,200 +63,143 @@ async fn get_dir_file_entries(
         let metadata = dirent.metadata().await?;
         let name = dirent.file_name();
         if metadata.is_dir() {
-            match name.into_string() {
-                Ok(s) => entries.push(FileEntry::Directory(s)),
-                Err(_name) => (),
-            }
+            entries.push(FileEntry::Directory(name.into()));
             continue;
         }
         if metadata.is_file() {
-            match name.into_string() {
-                Ok(s) => {
-                    if s.ends_with(".gcs") {
-                        entries.push(FileEntry::GCSFile(s));
-                    }
-                }
-                Err(_name) => (),
+            let path: PathBuf = name.into();
+            let is_gcs_file = match path.extension() {
+                None => false,
+                Some(os_str) => os_str == "gcs",
+            };
+            if is_gcs_file {
+                entries.push(FileEntry::GCSFile(path.into()));
             }
         }
     }
     Ok(entries)
 }
 
-async fn send_dir_gcs_files(
-    path: &PathBuf,
-    ws_writer: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
-) -> Result<(), DirSendError> {
-    let msg =
-        match get_dir_file_entries(path).await {
-            Ok(entries) => {
-                match path.to_str() {
-                    Some(s) => GCSAgentMessage::DirectoryChangeNotification(
-                        Ok((s.to_string(), entries)),
-                    ),
-                    None => {
-                        // Having no path is an acceptable thing to ignore,
-                        // so having an unencodable one should be too.
-                        return Ok(());
+async fn launch_browser(urls: Vec<Url>) -> Result<(), std::io::Error> {
+    for url in urls {
+        webbrowser::open(&url.as_str())?;
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+enum Void {}
+
+// From SSE handler or Notify to Router
+#[derive(Debug)]
+enum RouterMessage {
+    NewConnection {
+        id: String,
+        path_tx: Sender<OsString>,
+        resp_tx: Sender<Sender<(String, Receiver<OsString>)>>,
+        shutdown_rx: Receiver<Void>,
+    },
+    FileChange {
+        path: OsString,
+    },
+}
+async fn router_handler(
+    mut message_rx: Receiver<RouterMessage>,
+) -> Result<(), Box<dyn Error>> {
+    let (disconnect_tx, mut disconnect_rx) = unbounded_channel();
+    let mut connections: HashMap<String, Sender<OsString>> = HashMap::new();
+    let mut shutdown_futures = stream::FuturesUnordered::new();
+    let mut seen_any_sse = false;
+    loop {
+        let msg = select! {
+            msg = message_rx.next().fuse() => match msg {
+                None => break,
+                Some(msg) => msg,
+            },
+            disconnect = disconnect_rx.next().fuse() => {
+                let (id, _path_rx) = disconnect.unwrap();
+                assert!(connections.remove(&id).is_some());
+                continue;
+            },
+            res = shutdown_futures.next() => {
+                eprintln!("sse shutdown {:?}", &res);
+                match res {
+                    // NOTE: We get a None every time the shutdown queue empties
+                    //       If we haven't yet encountered any shutdowns then
+                    //       we continue, expecting a message to add shutdown.
+                    None => if seen_any_sse {
+                        break;
+                    }
+                    Some((shutdown_res, _shutdown_rx)) => match shutdown_res {
+                        Some(void) => match void {},
+                        None => {
+                        }
                     }
                 }
+                continue;
             }
-            Err(e) => GCSAgentMessage::DirectoryChangeNotification(Err(
-                format!("{:?}", e),
-            )),
         };
-    ws_writer
-        .send(Message::Binary(bincode::serialize(&msg)?))
-        .await?;
-    Ok(())
-}
-
-async fn send_sheet_contents(
-    path: String,
-    ws_writer: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
-) -> Result<(), GCSAgentError> {
-    let result = match fs::read_to_string(&path)
-        .await
-        .as_ref()
-        .map(String::as_str)
-        .map(serde_json::from_str::<gcs::FileKind>)
-    {
-        Ok(Ok(contents)) => Ok(GCSFile {
-            path,
-            file: contents,
-        }),
-        Ok(Err(e)) => {
-            let msg = format!("Couldn't parse sheet: {:?}", e);
-            eprintln!("{}", msg);
-            Err(msg)
-        }
-        Err(e) => {
-            let msg = format!("Couldn't read sheet: {:?}", e);
-            eprintln!("{}", msg);
-            Err(msg)
-        }
-    };
-    let m = GCSAgentMessage::RequestSheetContentsResult(result);
-    ws_writer
-        .send(Message::binary(
-            bincode::serialize(&m).expect("serialize message"),
-        ))
-        .await?;
-    Ok(())
-}
-
-// TODO: When std::ops::ControlFlow leaves nightly, use that
-enum ControlFlow {
-    Continue,
-    Break,
-}
-
-async fn handle_socket_message(
-    msg: Result<Message, TungsteniteError>,
-    curdir: &mut Option<PathBuf>,
-    ws_writer: &mut SplitSink<WebSocketStream<TcpStream>, Message>,
-    watcher: &mut RecommendedWatcher,
-) -> Result<ControlFlow, GCSAgentError> {
-    match msg? {
-        Message::Close(_) => Ok(ControlFlow::Break),
-        Message::Binary(bytes) => {
-            let msg = match bincode::deserialize(&bytes) {
-                Ok(msg) => msg,
-                Err(e) => {
-                    eprintln!("Err: {:?}", e);
-                    return Ok(ControlFlow::Continue);
+        eprintln!("Event msg {:?}", &msg);
+        match msg {
+            RouterMessage::NewConnection {
+                id,
+                path_tx,
+                resp_tx,
+                shutdown_rx,
+            } => {
+                match connections.entry(id.clone()) {
+                    Entry::Vacant(entry) => {
+                        entry.insert(path_tx);
+                    }
+                    // TODO: Reply with refusal if session SSE already open
+                    _ => (),
                 }
-            };
-            match msg {
-                WebUIMessage::RequestChDir(ref path) => {
-                    // Update current directory
-                    let chdir_result = if let Some(ref mut curdir) = curdir {
-                        curdir.push(path);
-                        Ok(())
-                    } else {
-                        let pathbuf = PathBuf::from(path);
-                        if pathbuf.is_absolute() {
-                            *curdir = Some(pathbuf);
-                            Ok(())
-                        } else {
-                            let msg = format!(
-                                "Couldn't chdir to {:?}, \
-                                 path is relative and have no \
-                                 current directory",
-                                path
-                            );
-                            eprintln!("{}", msg);
-                            Err(msg)
-                        }
-                    };
 
-                    let msg = GCSAgentMessage::RequestChDirResult(chdir_result);
-                    ws_writer
-                        .send(Message::binary(bincode::serialize(&msg)?))
-                        .await?;
-
-                    if let GCSAgentMessage::RequestChDirResult(chdir_result) =
-                        msg
-                    {
-                        if chdir_result.is_err() {
-                            return Ok(ControlFlow::Continue);
-                        }
-                    }
-
-                    if let Some(ref mut curdir) = curdir {
-                        send_dir_gcs_files(&curdir, ws_writer).await?;
-                    }
-                    Ok(ControlFlow::Continue)
-                }
-                WebUIMessage::RequestSheetContents(path) => {
-                    send_sheet_contents(path, ws_writer).await?;
-                    Ok(ControlFlow::Continue)
-                }
-                WebUIMessage::RequestWatch(path) => {
-                    let mut filepath = PathBuf::new();
-                    if let Some(ref curdir) = curdir {
-                        filepath.push(curdir);
-                    }
-                    filepath.push(path);
-                    if filepath.is_relative() {
-                        eprintln!("Can't request relative path {:?}", filepath);
-                        return Ok(ControlFlow::Continue);
-                    }
-                    let res = match watcher
-                        .watch(filepath, RecursiveMode::Recursive)
-                    {
-                        Ok(_) => Ok(()),
-                        Err(e) => Err(format!("{:?}", e)),
-                    };
-                    let resp = GCSAgentMessage::RequestWatchResult(res);
-                    match bincode::serialize(&resp) {
-                        Ok(bytes) => {
-                            ws_writer.send(Message::Binary(bytes)).await?;
-                            Ok(ControlFlow::Continue)
-                        }
-                        Err(e) => {
-                            return Err(GCSAgentError::RequestWatchError(e));
-                        }
-                    }
+                seen_any_sse = true;
+                shutdown_futures.push(shutdown_rx.into_future());
+                // Should always succeed because resp_rx is owned by handler
+                // that just sent NewConnection, is awaiting this message
+                // and is only never cancelled
+                resp_tx
+                    .unbounded_send(disconnect_tx.clone())
+                    .expect("SSE handler response channel");
+            }
+            RouterMessage::FileChange { path } => {
+                for path_tx in connections.values() {
+                    // Sender should always succeed
+                    // because path_rx is returned to us
+                    path_tx
+                        .unbounded_send(path.clone())
+                        .expect("Connection handler channel alive");
                 }
             }
-        }
-        msg => {
-            return Err(GCSAgentError::UnexpectedMessage(msg));
         }
     }
+    drop(connections);
+    drop(disconnect_tx);
+    while let Some((_id, _path_rx)) = disconnect_rx.next().await {}
+    Ok(())
 }
 
-async fn run() -> Result<(), GCSAgentError> {
-    let ws_listener =
-        TcpListener::bind(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 0))
+async fn process_sse_channel(
+    path_rx: &mut Receiver<OsString>,
+    sender: SSESender,
+) -> tide::Result {
+    while let Some(path) = path_rx.next().await {
+        sender
+            .send("file_change", &serde_json::to_string(&path)?, None)
             .await?;
-    let ws_addr = ws_listener.local_addr()?;
+    }
+    Ok(tide::StatusCode::Ok.into())
+}
 
-    let (tx, mut rx) = unbounded_channel();
+async fn run() -> Result<(), Box<dyn Error>> {
+    let (message_tx, message_rx) = unbounded_channel::<RouterMessage>();
+    let mut router = router_handler(message_rx).boxed().fuse();
 
     // Spawn file watcher thread
-    let mut watcher: RecommendedWatcher =
+    let watcher_message_tx = message_tx.clone();
+    let watcher: RecommendedWatcher =
         Watcher::new_immediate(move |res: NotifyResult<NotifyEvent>| {
             // TODO: How can we do error handling
             // when this callback doesn't have a Result return type?
@@ -320,110 +209,247 @@ async fn run() -> Result<(), GCSAgentError> {
                     "Got notify event on path: {}",
                     path.to_str().unwrap()
                 );
-                tx.unbounded_send(path).unwrap();
+                watcher_message_tx
+                    .unbounded_send(RouterMessage::FileChange {
+                        path: path.into(),
+                    })
+                    .unwrap();
             }
         })?;
+    let watcher_ref = Arc::new(Mutex::new(watcher));
 
-    let ws_stream = {
-        let mut http_server: tide::Server<()> = tide::new();
-        http_server.at("/").get(handle_http_request);
-
-        let http_addr = SocketAddr::from(([127, 0, 0, 1], 0));
-        let mut http_listener = http_server.bind(http_addr).await?;
-
-        let httpaddrs = http_listener.info();
-
-        let launch = task::spawn(async move {
-            // TODO: Error handling for _why_ launch failed.
-            for httpaddr in httpaddrs {
-                let url = if let Ok(url) = Url::parse_with_params(
-                    &httpaddr.to_string(),
-                    &[("agentaddr", ws_addr.to_string())],
-                ) {
-                    url
-                } else {
-                    continue;
-                };
-
-                if webbrowser::open(&url.as_str()).is_ok() {
-                    return true;
+    let mut http_server: tide::Server<()> = tide::new();
+    http_server.with(
+        tide::sessions::SessionMiddleware::new(
+            tide::sessions::MemoryStore::new(),
+            b"TODO: Generate at random on first boot and store in config.",
+        )
+        .with_cookie_name("gmtool.gcsagent"),
+    );
+    http_server.with(tide::utils::Before(
+        |mut request: tide::Request<()>| async move {
+            let session = request.session_mut();
+            let mut curdir = session
+                .get::<Option<std::path::PathBuf>>("curdir")
+                .unwrap_or_default();
+            if let None = curdir {
+                curdir = match std::env::current_dir() {
+                    Ok(curdir) => Some(curdir.into()),
+                    Err(e) => {
+                        eprintln!("Current directory missing {:?}", e);
+                        // In the absence of a current directory
+                        // hope client gives us an absolute path to work with.
+                        None
+                    }
                 }
             }
-            false
+            session.insert("curdir", curdir).unwrap();
+            request
+        },
+    ));
+    http_server.at("/webui").get(get_webui);
+    http_server
+        .at("/sse")
+        .get(move |req: tide::Request<()>| {
+            let message_tx = message_tx.clone();
+            async move {
+                let resp = tide::sse::upgrade(req, move |req, sender| {
+                    let message_tx = message_tx.clone();
+                    async move {
+                        let (path_tx, mut path_rx) = unbounded_channel();
+                        let (resp_tx, mut resp_rx) = unbounded_channel();
+                        // TODO: Move shutdown handling into a middleware.
+                        let (_shutdown_tx, shutdown_rx) = unbounded_channel();
+                        let id = req.session().id().to_string();
+                        message_tx
+                            .unbounded_send(RouterMessage::NewConnection {
+                                id: id.clone(),
+                                path_tx,
+                                resp_tx,
+                                shutdown_rx,
+                            })
+                            .expect("Message channel live");
+
+                        // next should always be some disconnect_tx because
+                        // resp_tx was sent to router which outlives us
+                        let disconnect_tx =
+                            resp_rx.next().await.expect("Router response");
+                        drop(resp_rx);
+
+                        // Inner loop of sse messages
+                        let res = process_sse_channel(&mut path_rx, sender).await;
+                        // send should always succeed because disconnect_rx is owned
+                        // by the router routine that gave us _tx
+                        // and that routine only ends after all SSE handlers disconnect
+                        disconnect_tx.unbounded_send((id, path_rx))?;
+                        res?;
+                        Ok(())
+                    }
+                });
+                Ok(resp)
+            }
+        });
+    http_server
+        .at("/watch")
+        .post(move |mut req: tide::Request<()>| {
+            let watcher_ref = Arc::clone(&watcher_ref);
+            async move {
+                let path: PortableOsString =
+                    bincode::deserialize(&req.body_bytes().await?)?;
+                watcher_ref.lock_arc().await.watch(
+                    OsString::try_from(path).unwrap(),
+                    RecursiveMode::NonRecursive,
+                )?;
+                tide::Result::from(Ok(tide::StatusCode::Ok))
+            }
+        });
+    http_server
+        .at("/chdir")
+        .post(|mut req: tide::Request<()>| async move {
+            let bytes_res = req.body_bytes().await;
+            let bytes = match bytes_res {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    let msg = format!("Body read failed {:?}", e);
+                    eprintln!("{}", msg);
+                    return Err(tide::Error::from_str(
+                        tide::StatusCode::InternalServerError,
+                        msg,
+                    ))
+                    .into();
+                }
+            };
+            let path: PortableOsString = match bincode::deserialize(&bytes) {
+                Ok(path) => path,
+                Err(e) => {
+                    let msg = format!("Body deserialize failed {:?}", e);
+                    eprintln!("{}", msg);
+                    return Err(tide::Error::from_str(
+                        tide::StatusCode::BadRequest,
+                        msg,
+                    ))
+                    .into();
+                }
+            };
+            let path: PathBuf = path.try_into().expect("native OsString");
+            let session = req.session_mut();
+            let mut curdir =
+                session.get::<Option<PathBuf>>("curdir").unwrap_or_default();
+
+            // Update current directory
+            let chdir_result = if let Some(ref mut curdir) = curdir {
+                curdir.push(path);
+                Ok(tide::Body::from(bincode::serialize(
+                    &PortableOsString::from(curdir.clone()),
+                )?))
+            } else if path.is_absolute() {
+                curdir = Some(path.clone());
+                Ok(tide::Body::from(bincode::serialize(
+                    &PortableOsString::from(path),
+                )?))
+            } else {
+                let msg = format!(
+                    "Couldn't chdir to {:?}, \
+                     path is relative and have no \
+                     current directory",
+                    path
+                );
+                eprintln!("{}", msg);
+                Err(tide::Error::from_str(
+                    tide::StatusCode::PreconditionRequired,
+                    msg,
+                ))
+            };
+
+            session.insert("curdir", curdir)?;
+
+            tide::Result::from(chdir_result)
+        });
+    http_server
+        .at("/lsdir")
+        .post(|req: tide::Request<()>| async move {
+            let session = req.session();
+            // TODO: Deserialise body
+            let curdir =
+                session.get::<Option<PathBuf>>("curdir").unwrap_or_default();
+            let list = match curdir {
+                Some(path) => get_dir_file_entries(&path.into()).await?,
+                None => {
+                    return Err(tide::Error::from_str(
+                        tide::StatusCode::PreconditionRequired,
+                        "No current directory to list",
+                    ))
+                }
+            };
+
+            tide::Result::Ok(tide::Body::from(bincode::serialize(&list)?))
+        });
+    http_server
+        .at("/read")
+        .post(|mut req: tide::Request<()>| async move {
+            let path: PortableOsString =
+                bincode::deserialize(&req.body_bytes().await?)?;
+            let path: OsString = path.try_into().expect("native OsString");
+            let file: gcs::FileKind = serde_json::from_str(
+                fs::read_to_string(&path).await?.as_str(),
+            )?;
+
+            tide::Result::Ok(tide::Body::from(serde_cbor::to_vec(&file)?))
         });
 
-        let mut launch_fused = launch.fuse();
-        let mut http_listener_accept_fused = http_listener.accept().fuse();
-        loop {
-            select! {
-                res = http_listener_accept_fused => {
-                    // We're expecting to drop this rather than it return.
-                    // If it did so, it was probably an error.
-                    // TODO: Replace with an Error value
-                    assert!(res.is_err());
-                },
-                launched = launch_fused => {
-                    // Launching can fail, and if it does we can't recover
-                    // TODO: Replace with an Error value
-                    assert!(launched);
-                },
-                // TODO: Should be some kind of iterator,
-                // so we can accept multiple.
-                res = ws_listener.accept().fuse() => {
-                    let (stream, addr) = res?;
-                    println!("Got peer connection from {}", addr);
-                    match accept_async(stream).await {
-                        Ok(ws_stream) => break ws_stream,
-                        Err(e) => eprintln!("Peer failed to connect: {}", e),
-                    };
-                },
-            }
-        }
-    };
+    let http_addr = SocketAddr::from(([127, 0, 0, 1], 0));
+    let mut http_listener = http_server.bind(http_addr).await?;
 
-    let (mut ws_writer, ws_reader) = ws_stream.split();
-    let mut fused_socket_reader = ws_reader.fuse();
+    let httpaddrs = http_listener.info();
+    println!(
+        "Bound server to {:?}",
+        httpaddrs
+            .iter()
+            .map(ListenInfo::to_string)
+            .collect::<Vec<String>>()
+    );
 
-    // Introduce ourself with current dir
-    let mut curdir: Option<PathBuf> = match std::env::current_dir() {
-        Ok(curdir) => Some(curdir.into()),
-        Err(_) => {
-            // TODO: Log current dir doesn't exist
-            // In the absence of a current directory
-            // hope client gives us an absolute path to work with.
-            None
-        }
-    };
-
-    if let Some(curdir) = &curdir {
-        send_dir_gcs_files(curdir, &mut ws_writer).await?;
+    let mut urls: Vec<Url> = Vec::new();
+    for httpaddr in httpaddrs {
+        let mut url = Url::parse_with_params(
+            &httpaddr.to_string(),
+            &[("agentaddr", httpaddr.to_string())],
+        )?;
+        url.set_path("/webui");
+        urls.push(url);
     }
 
+    // NOTE: Necessarily uses an executor specific spawn
+    //       Because a blocking API needs to be used.
+    //       Spawning an OS thread an asynchronously sending via unbounded
+    //       is not worth the effort to be executor independant
+    //       and launch_browser(urls).boxed() is a task that blocks.
+    let launch = task::spawn(launch_browser(urls));
+
+    let mut launch_fused = launch.fuse();
+    let mut http_listener_accept_fused = http_listener.accept().fuse();
+    //let mut rx_fused = rx.fuse();
     loop {
         select! {
-            msg = fused_socket_reader.select_next_some() => {
-                match handle_socket_message(msg, &mut curdir, &mut ws_writer,
-                                            &mut watcher).await? {
-                    ControlFlow::Continue => continue,
-                    ControlFlow::Break => break,
-                }
+            res = http_listener_accept_fused => {
+                // http listener accept in principle returns
+                // when the connection stops accepting,
+                // but that would be in the case of error
+                // and as of now tide logs and swallows them
+                // Realistically we drop this future for another reason
+                break Ok(res?);
             },
-            path = rx.next() => {
-                // TODO: Send both path and contents?
-                let resp = GCSAgentMessage::FileChangeNotification(path.unwrap().to_str().unwrap().to_string());
-                let serialised = bincode::serialize(&resp);
-                // TODO: Less silent serialise error.
-                if let Ok(bytes) = serialised {
-                    ws_writer.send(Message::Binary(bytes)).await?;
-                }
+            launched = launch_fused => {
+                // Launching can fail, and if it does we can't recover
+                launched?;
             },
-            complete => break,
+            res = router => {
+                break res;
+            },
         }
     }
-
-    Ok(())
 }
 
-fn main() -> Result<(), GCSAgentError> {
+fn main() -> Result<(), Box<dyn Error>> {
     task::block_on(run())
 }

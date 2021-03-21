@@ -80,3 +80,27 @@ webui
     1.  Need to track more complex DR.
     2.  Need to encode which of alternative abilities are active.
 3.  Provide interface for configuring other components.
+
+Future plans
+============
+
+1.  Bridge to MapTool
+2.  GCS file watcher to offer to reload on change.
+3.  MapTool URI scheme to provide MapTool launch and quick-join URL.
+4.  Tools for automatic peer-to-peer connectivity with per-device domain name.
+    1.  Client that reacts to current network connection state,
+        uses UPnP-IGD/PCP connect to router and find external IP addresses,
+        updates A record at https://dynv6.com/ to point to current address.
+    2.  When service is started, client requests port forwarding from router.
+        1.  If non-http server add a SRV record via dynv6 API referencing port.
+        2.  If http server, use pre-configured CNAME www.$domain
+            pointing to a HTTP redirect service.
+            1.  If a better one can't be found can redirect with GitHub pages
+                by pushing a static html document to page that uses an html
+                meta-equiv tag.
+            2.  A generic site might use
+                https://developers.google.com/speed/public-dns/docs/doh/json
+                and make a DNS request via window.fetch
+                then forward via javascript
+        When finished port forwarding is removed.
+    3.  MapTool client makes SRV lookups.
