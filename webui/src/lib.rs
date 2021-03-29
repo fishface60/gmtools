@@ -170,18 +170,15 @@ fn request_chdir(
 fn request_lsdir(
     agentaddr: &Url,
     link: &mut ComponentLink<Model>,
-    path: PortableOsString,
 ) -> Result<FetchTask, anyhow::Error> {
-    ConsoleService::log(&format!("Path: {:?}", &path));
     let mut uri = agentaddr.clone();
     uri.set_path("/lsdir");
     ConsoleService::log(&format!("URI: {:?}", &uri));
-    let bytes = bincode::serialize(&path)?;
-    ConsoleService::log(&format!("Bytes: {:?}", &bytes));
     let req = Request::builder()
         .uri(uri.as_str())
         .method(Method::POST)
-        .body(Ok(bytes))?;
+        .body(Ok(Vec::<u8>::new()))
+        .unwrap();
     ConsoleService::log(&format!("Request: {:?}", &req));
 
     let task = FetchService::fetch_binary(
@@ -218,7 +215,6 @@ fn request_read(
         .uri(uri.as_str())
         .method(Method::POST)
         .body(Ok(bincode::serialize(&path)?))?;
-    let path = path.clone();
     let clos = move |response: Response<Result<Vec<u8>, anyhow::Error>>| {
         let bytes = match response.into_body() {
             Ok(bytes) => bytes,
@@ -270,24 +266,21 @@ impl Component for Model {
         let (agentaddr, _sse_con) = connect_sse(&mut link);
 
         let mut fetch_tasks = vec![];
-        match agentaddr {
-            Some(ref agentaddr) => {
-                match request_chdir(
-                    &agentaddr,
-                    &mut link,
-                    PortableOsString::from("."),
-                ) {
-                    Ok(fetch_task) => fetch_tasks.push(fetch_task),
-                    Err(e) => {
-                        ConsoleService::error(&format!(
-                            "Request chdir failed {:?}",
-                            e
-                        ));
-                    }
+        if let Some(ref agentaddr) = agentaddr {
+            match request_chdir(
+                &agentaddr,
+                &mut link,
+                PortableOsString::from("."),
+            ) {
+                Ok(fetch_task) => fetch_tasks.push(fetch_task),
+                Err(e) => {
+                    ConsoleService::error(&format!(
+                        "Request chdir failed {:?}",
+                        e
+                    ));
                 }
             }
-            None => (),
-        };
+        }
 
         Model {
             agentaddr,
@@ -404,7 +397,6 @@ impl Component for Model {
                 match request_lsdir(
                     self.agentaddr.as_ref().unwrap(),
                     &mut self.link,
-                    path,
                 ) {
                     Ok(fetch_task) => self.fetch_tasks.push(fetch_task),
                     Err(e) => {

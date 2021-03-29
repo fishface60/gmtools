@@ -84,6 +84,9 @@ webui
 Future plans
 ============
 
+0.  Retry http-client for webui, using improved dependency resolution
+    and submitting patches to disable features in dependencies
+    that don't build on wasm.
 1.  Bridge to MapTool
 2.  GCS file watcher to offer to reload on change.
 3.  MapTool URI scheme to provide MapTool launch and quick-join URL.
@@ -104,3 +107,5 @@ Future plans
                 then forward via javascript
         When finished port forwarding is removed.
     3.  MapTool client makes SRV lookups.
+    4.  Special-purpose VPN endpoint that implements UPnP-IGD/NAT-PMP/PCP
+        so that in a less permissible network you can get a reachable address.

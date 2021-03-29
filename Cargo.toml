@@ -22,12 +22,15 @@ bincode = "*"
 futures = "0.3.*"
 gcs = { path = "gcs" }
 gmtool-common = { path = "gmtool_common" }
-http-types = "2.10.*"
+hyper = { version = "0.14", features = ["full"] }
 notify = "5.0.0-pre.6"
+pin-project = "1.0"
 serde_cbor = "*"
 serde_json = "*"
-tide = "0.16"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 url = "2.2.*"
+warp = "0.3"
+warp-sessions = "1.0"
 webbrowser = "0.5.5"
 
 [build-dependencies]

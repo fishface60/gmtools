@@ -1,9 +1,9 @@
-#![allow(clippy::single_component_path_imports, clippy::large_enum_variant)]
-use std::{
-    convert::TryFrom,
-    ffi::OsString,
-    path::PathBuf,
-};
+#![allow(
+    clippy::large_enum_variant,
+    clippy::single_component_path_imports,
+    clippy::upper_case_acronyms
+)]
+use std::{convert::TryFrom, ffi::OsString, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -20,8 +20,8 @@ impl PortableOsString {
     pub fn to_str_lossy(&self) -> &str {
         match self {
             Self::Undifferentiated(s) => s,
-            Self::Unix{ text, .. } => text,
-            Self::Windows{ text, .. } => text,
+            Self::Unix { text, .. } => text,
+            Self::Windows { text, .. } => text,
         }
     }
     pub fn to_string_lossy(&self) -> String {
@@ -82,7 +82,7 @@ impl TryFrom<PortableOsString> for OsString {
     #[cfg(unix)]
     fn try_from(s: PortableOsString) -> Result<Self, Self::Error> {
         match s {
-            PortableOsString::Unix{ data, .. } => {
+            PortableOsString::Unix { data, .. } => {
                 use std::os::unix::ffi::OsStringExt;
                 Ok(Self::from_vec(data))
             }
@@ -93,7 +93,7 @@ impl TryFrom<PortableOsString> for OsString {
     #[cfg(windows)]
     fn try_from(s: PortableOsString) -> Result<Self, Self::Error> {
         match s {
-            PortableOsString::Windows{ data, .. } => {
+            PortableOsString::Windows { data, .. } => {
                 use std::os::windows::ffi::OsStringExt;
                 Ok(Self::from_wide(data))
             }

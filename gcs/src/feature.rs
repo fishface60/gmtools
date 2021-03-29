@@ -1,3 +1,5 @@
+#![allow(clippy::upper_case_acronyms)]
+
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_value::{Value as SerdeValue, ValueDeserializer};
 
