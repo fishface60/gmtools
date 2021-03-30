@@ -12,7 +12,7 @@ use web_sys::{
 };
 use yew::{
     self,
-    format::Json,
+    format::{Json, Nothing},
     html,
     services::{
         fetch::{FetchTask, Method, Request, Response},
@@ -88,6 +88,22 @@ fn connect_sse(
             break;
         }
     }
+
+    let history = match window.history() {
+        Ok(history) => Some(history),
+        Err(e) => {
+            ConsoleService::warn(&format!("could not access history: {:?}", e));
+            None
+        }
+    };
+    if let Some(history) = history {
+        if let Err(e) =
+            history.replace_state_with_url(&JsValue::NULL, "", Some("/webui"))
+        {
+            ConsoleService::warn(&format!("could not change url: {:?}", e));
+        }
+    }
+
     let agentaddr = match agentaddr {
         Some(agentaddr) => agentaddr.to_string(),
         None => {
