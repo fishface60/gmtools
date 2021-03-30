@@ -176,8 +176,8 @@ fn request_lsdir(
     ConsoleService::log(&format!("URI: {:?}", &uri));
     let req = Request::builder()
         .uri(uri.as_str())
-        .method(Method::POST)
-        .body(Ok(Vec::<u8>::new()))
+        .method(Method::GET)
+        .body(Nothing)
         .unwrap();
     ConsoleService::log(&format!("Request: {:?}", &req));
 

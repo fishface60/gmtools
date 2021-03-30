@@ -327,8 +327,8 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         )
         .untuple_one()
         .and_then(warp_sessions::reply::with_session);
-    let post_lsdir = warp::path("lsdir")
-        .and(warp::post())
+    let get_lsdir = warp::path("lsdir")
+        .and(warp::get())
         .and(with_session.clone())
         .and_then(
             move |mut session_with_store: SessionWithStore<MemoryStore>| async move {
@@ -616,7 +616,7 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
 
     let routes = get_webui
         .or(post_chdir)
-        .or(post_lsdir)
+        .or(get_lsdir)
         .or(post_read)
         .or(get_sse)
         .or(post_watch);
