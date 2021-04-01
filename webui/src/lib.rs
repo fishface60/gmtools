@@ -5,6 +5,8 @@ mod navlist;
 mod sheetlist;
 mod weakcomponentlink;
 
+use std::convert::TryInto;
+
 use anyhow::anyhow;
 use url::Url;
 use wasm_bindgen::prelude::*;
@@ -39,6 +41,7 @@ pub struct Model {
     links_list_element: WeakComponentLink<CharacterSheetLinkList>,
     sheets_list_element: WeakComponentLink<CharacterSheetList>,
     sse_con: Option<EventSourceTask>,
+    secret: Option<u32>,
 }
 
 impl Model {
@@ -61,6 +64,30 @@ impl Model {
             .uri(uri.as_str())
             .method(method)
             .body(body)?)
+    }
+
+    fn request_auth(&mut self) -> Result<(), anyhow::Error> {
+        let secret = self
+            .secret
+            .ok_or_else(|| anyhow!("Can't auth without secret"))?;
+        let req = self.build_request(
+            Method::POST,
+            "/auth",
+            Ok(bincode::serialize(&secret)?),
+        )?;
+        let clos = |response: Response<Nothing>| {
+            if !response.status().is_success() {
+                ConsoleService::warn(&format!(
+                    "Auth returned {}",
+                    response.status()
+                ));
+                return Msg::Ignore;
+            }
+            Msg::Authenticated { connect_sse: true }
+        };
+        let task = FetchService::fetch_binary(req, self.link.callback(clos))?;
+        self.fetch_tasks.push(task);
+        Ok(())
     }
 
     fn connect_sse(&mut self) -> Result<(), anyhow::Error> {
@@ -212,6 +239,7 @@ impl Model {
 
 #[derive(Debug)]
 pub enum Msg {
+    Authenticated { connect_sse: bool },
     DirectoryEntrySelected(FileEntry),
     DirectoryPathSubmitted,
     FileChange(PortableOsString),
@@ -221,7 +249,7 @@ pub enum Msg {
     Ignore,
 }
 
-fn parse_params() -> Option<Url> {
+fn parse_params() -> (Option<Url>, Option<u32>) {
     let window = match web_sys::window() {
         None => {
             ConsoleService::error("window object exists");
@@ -244,10 +272,28 @@ fn parse_params() -> Option<Url> {
         Ok(url) => url,
     };
     let mut agentaddr = None;
+    let mut secret = None;
     for (k, v) in url.query_pairs() {
         if k == "agentaddr" {
             agentaddr = Some(v);
-            break;
+            if secret.is_some() {
+                break;
+            }
+        } else if k == "token" {
+            let array = match base64::decode(v.into_owned()) {
+                Ok(vec) => vec.try_into().expect("Token 4 bytes"),
+                Err(e) => {
+                    ConsoleService::error(&format!(
+                        "token decode failed {:?}",
+                        e
+                    ));
+                    continue;
+                }
+            };
+            secret = Some(u32::from_le_bytes(array));
+            if agentaddr.is_some() {
+                break;
+            }
         }
     }
 
@@ -280,7 +326,7 @@ fn parse_params() -> Option<Url> {
         Ok(agentaddr) => Some(agentaddr),
     };
 
-    agentaddr
+    (agentaddr, secret)
 }
 
 impl Component for Model {
@@ -288,7 +334,7 @@ impl Component for Model {
     type Properties = ();
 
     fn create(_: Self::Properties, link: ComponentLink<Self>) -> Self {
-        let agentaddr = parse_params();
+        let (agentaddr, secret) = parse_params();
 
         let mut model = Model {
             agentaddr,
@@ -298,13 +344,14 @@ impl Component for Model {
             link,
             links_list_element:
                 WeakComponentLink::<CharacterSheetLinkList>::default(),
+            secret,
             sheets_list_element:
                 WeakComponentLink::<CharacterSheetList>::default(),
             sse_con: None,
         };
 
-        if let Err(e) = model.connect_sse() {
-            ConsoleService::error(&format!("Connect sse failed {:?}", e));
+        if let Err(e) = model.request_auth() {
+            ConsoleService::error(&format!("Auth failed: {:?}", e));
         }
 
         if let Err(e) = model.request_chdir(&PortableOsString::from(".")) {
@@ -320,6 +367,17 @@ impl Component for Model {
 
     fn update(&mut self, msg: Self::Message) -> ShouldRender {
         match msg {
+            Msg::Authenticated { connect_sse } => {
+                if connect_sse {
+                    if let Err(e) = self.connect_sse() {
+                        ConsoleService::error(&format!(
+                            "Connect sse failed {:?}",
+                            e
+                        ));
+                    }
+                }
+                false
+            }
             Msg::DirectoryEntrySelected(entry) => {
                 match entry {
                     FileEntry::Directory(ref path) => {
