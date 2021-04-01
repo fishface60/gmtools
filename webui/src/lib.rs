@@ -44,6 +44,137 @@ impl Model {
     fn clear_fetch_tasks(&mut self) {
         self.fetch_tasks.retain(FetchTask::is_active);
     }
+
+    fn build_request<T>(
+        &self,
+        method: Method,
+        path: &str,
+        body: T,
+    ) -> Result<Request<T>, anyhow::Error> {
+        let mut uri = match self.agentaddr {
+            Some(ref agentaddr) => agentaddr.clone(),
+            None => anyhow::bail!("No agent address"),
+        };
+        uri.set_path(path);
+        Ok(Request::builder()
+            .uri(uri.as_str())
+            .method(method)
+            .body(body)?)
+    }
+
+    fn request_chdir(
+        &mut self,
+        path: &PortableOsString,
+    ) -> Result<(), anyhow::Error> {
+        let req = self.build_request(
+            Method::POST,
+            "/chdir",
+            Ok(bincode::serialize(path)?),
+        )?;
+        let clos = |response: Response<Result<Vec<u8>, anyhow::Error>>| {
+            let bytes = match response.into_body() {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    ConsoleService::error(&format!("{:?}", e));
+                    return Msg::Ignore;
+                }
+            };
+            let contents = match bincode::deserialize(&bytes) {
+                Ok(contents) => contents,
+                Err(e) => {
+                    ConsoleService::error(&format!("{:?}", e));
+                    return Msg::Ignore;
+                }
+            };
+            Msg::RequestChDirResponse(contents)
+        };
+        let task = FetchService::fetch_binary(req, self.link.callback(clos))?;
+        self.fetch_tasks.push(task);
+        Ok(())
+    }
+
+    fn request_lsdir(&mut self) -> Result<(), anyhow::Error> {
+        let req = self.build_request(Method::GET, "/lsdir", Nothing)?;
+        let clos = |response: Response<Result<Vec<u8>, anyhow::Error>>| {
+            let bytes = match response.into_body() {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    ConsoleService::error(&format!("{:?}", e));
+                    return Msg::Ignore;
+                }
+            };
+            let contents = match bincode::deserialize(&bytes) {
+                Ok(contents) => contents,
+                Err(e) => {
+                    ConsoleService::error(&format!("{:?}", e));
+                    return Msg::Ignore;
+                }
+            };
+            Msg::RequestLsDirResponse(contents)
+        };
+        let task = FetchService::fetch_binary(req, self.link.callback(clos))?;
+        self.fetch_tasks.push(task);
+        Ok(())
+    }
+
+    fn request_read(
+        &mut self,
+        path: PortableOsString,
+    ) -> Result<(), anyhow::Error> {
+        let req = self.build_request(
+            Method::POST,
+            "/read",
+            Ok(bincode::serialize(&path)?),
+        )?;
+        let clos = move |response: Response<Result<Vec<u8>, anyhow::Error>>| {
+            let bytes = match response.into_body() {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    ConsoleService::error(&format!(
+                        "Response into body: {:?}",
+                        e
+                    ));
+                    return Msg::Ignore;
+                }
+            };
+            let contents = match serde_cbor::from_slice(&bytes) {
+                Ok(contents) => contents,
+                Err(e) => {
+                    ConsoleService::error(&format!(
+                        "Body deserialize: {:?}",
+                        e
+                    ));
+                    return Msg::Ignore;
+                }
+            };
+            Msg::RequestSheetContentsResponse(path, contents)
+        };
+        let task =
+            FetchService::fetch_binary(req, self.link.callback_once(clos))?;
+        self.fetch_tasks.push(task);
+        Ok(())
+    }
+
+    fn request_watch(
+        &mut self,
+        path: &PortableOsString,
+    ) -> Result<(), anyhow::Error> {
+        let req = self.build_request(
+            Method::POST,
+            "/watch",
+            Ok(bincode::serialize(path)?),
+        )?;
+        let clos = move |response: Response<Result<Vec<u8>, anyhow::Error>>| {
+            ConsoleService::debug(&format!("watch response: {:?}", &response));
+            if let Err(e) = response.into_body() {
+                ConsoleService::error(&format!("{:?}", e));
+            }
+            Msg::Ignore
+        };
+        let task = FetchService::fetch_binary(req, self.link.callback(clos))?;
+        self.fetch_tasks.push(task);
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -57,9 +188,7 @@ pub enum Msg {
     Ignore,
 }
 
-fn connect_sse(
-    link: &mut ComponentLink<Model>,
-) -> (Option<Url>, Option<EventSourceTask>) {
+fn parse_params() -> Option<Url> {
     let window = match web_sys::window() {
         None => {
             ConsoleService::error("window object exists");
@@ -89,18 +218,16 @@ fn connect_sse(
         }
     }
 
-    let history = match window.history() {
-        Ok(history) => Some(history),
+    match window.history() {
         Err(e) => {
             ConsoleService::warn(&format!("could not access history: {:?}", e));
-            None
         }
-    };
-    if let Some(history) = history {
-        if let Err(e) =
-            history.replace_state_with_url(&JsValue::NULL, "", Some("/webui"))
-        {
-            ConsoleService::warn(&format!("could not change url: {:?}", e));
+        Ok(hst) => {
+            if let Err(e) =
+                hst.replace_state_with_url(&JsValue::NULL, "", Some("/webui"))
+            {
+                ConsoleService::warn(&format!("could not change url: {:?}", e));
+            }
         }
     }
 
@@ -112,13 +239,22 @@ fn connect_sse(
         }
     };
 
-    let mut agentaddr = match Url::parse(&agentaddr) {
+    let agentaddr = match Url::parse(&agentaddr) {
         Err(e) => {
             ConsoleService::error(&format!("agentaddr parse failed {:?}", e));
             return (None, None);
         }
-        Ok(agentaddr) => agentaddr,
+        Ok(agentaddr) => Some(agentaddr),
     };
+
+    agentaddr
+}
+
+fn connect_sse(
+    agentaddr: &Url,
+    link: &mut ComponentLink<Model>,
+) -> Option<EventSourceTask> {
+    let mut agentaddr = agentaddr.clone();
     agentaddr.set_path("/sse");
 
     let mut sse_con = match EventSourceService::new().connect(
@@ -133,7 +269,7 @@ fn connect_sse(
         Ok(sse_con) => sse_con,
         Err(e) => {
             ConsoleService::error(&format!("sse connect failed {:?}", e));
-            return (Some(agentaddr), None);
+            return None;
         }
     };
     sse_con.add_event_listener(
@@ -146,132 +282,7 @@ fn connect_sse(
             }
         }),
     );
-    (Some(agentaddr), Some(sse_con))
-}
-
-fn request_chdir(
-    agentaddr: &Url,
-    link: &mut ComponentLink<Model>,
-    path: PortableOsString,
-) -> Result<FetchTask, anyhow::Error> {
-    let mut uri = agentaddr.clone();
-    uri.set_path("/chdir");
-    let req = Request::builder()
-        .uri(uri.as_str())
-        .method(Method::POST)
-        .body(Ok(bincode::serialize(&path)?))?;
-    let task = FetchService::fetch_binary(
-        req,
-        link.callback(|response: Response<Result<Vec<u8>, anyhow::Error>>| {
-            let bytes = match response.into_body() {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    ConsoleService::error(&format!("{:?}", e));
-                    return Msg::Ignore;
-                }
-            };
-            let contents = match bincode::deserialize(&bytes) {
-                Ok(contents) => contents,
-                Err(e) => {
-                    ConsoleService::error(&format!("{:?}", e));
-                    return Msg::Ignore;
-                }
-            };
-            Msg::RequestChDirResponse(contents)
-        }),
-    )?;
-    Ok(task)
-}
-
-fn request_lsdir(
-    agentaddr: &Url,
-    link: &mut ComponentLink<Model>,
-) -> Result<FetchTask, anyhow::Error> {
-    let mut uri = agentaddr.clone();
-    uri.set_path("/lsdir");
-    ConsoleService::log(&format!("URI: {:?}", &uri));
-    let req = Request::builder()
-        .uri(uri.as_str())
-        .method(Method::GET)
-        .body(Nothing)
-        .unwrap();
-    ConsoleService::log(&format!("Request: {:?}", &req));
-
-    let task = FetchService::fetch_binary(
-        req,
-        link.callback(|response: Response<Result<Vec<u8>, anyhow::Error>>| {
-            let bytes = match response.into_body() {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    ConsoleService::error(&format!("{:?}", e));
-                    return Msg::Ignore;
-                }
-            };
-            let contents = match bincode::deserialize(&bytes) {
-                Ok(contents) => contents,
-                Err(e) => {
-                    ConsoleService::error(&format!("{:?}", e));
-                    return Msg::Ignore;
-                }
-            };
-            Msg::RequestLsDirResponse(contents)
-        }),
-    )?;
-    Ok(task)
-}
-
-fn request_read(
-    agentaddr: &Url,
-    link: &mut ComponentLink<Model>,
-    path: PortableOsString,
-) -> Result<FetchTask, anyhow::Error> {
-    let mut uri = agentaddr.clone();
-    uri.set_path("/read");
-    let req = Request::builder()
-        .uri(uri.as_str())
-        .method(Method::POST)
-        .body(Ok(bincode::serialize(&path)?))?;
-    let clos = move |response: Response<Result<Vec<u8>, anyhow::Error>>| {
-        let bytes = match response.into_body() {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                ConsoleService::error(&format!("Response into body: {:?}", e));
-                return Msg::Ignore;
-            }
-        };
-        let contents = match serde_cbor::from_slice(&bytes) {
-            Ok(contents) => contents,
-            Err(e) => {
-                ConsoleService::error(&format!("Body deserialize: {:?}", e));
-                return Msg::Ignore;
-            }
-        };
-        Msg::RequestSheetContentsResponse(path, contents)
-    };
-    let task = FetchService::fetch_binary(req, link.callback_once(clos))?;
-    Ok(task)
-}
-
-fn request_watch(
-    agentaddr: &Url,
-    link: &mut ComponentLink<Model>,
-    path: PortableOsString,
-) -> Result<FetchTask, anyhow::Error> {
-    let mut uri = agentaddr.clone();
-    uri.set_path("/watch");
-    let req = Request::builder()
-        .uri(uri.as_str())
-        .method(Method::POST)
-        .body(Ok(bincode::serialize(&path)?))?;
-    let clos = move |response: Response<Result<Vec<u8>, anyhow::Error>>| {
-        ConsoleService::debug(&format!("watch response: {:?}", &response));
-        if let Err(e) = response.into_body() {
-            ConsoleService::error(&format!("{:?}", e));
-        }
-        Msg::Ignore
-    };
-    let task = FetchService::fetch_binary(req, link.callback_once(clos))?;
-    Ok(task)
+    Some(sse_con)
 }
 
 impl Component for Model {
@@ -279,37 +290,30 @@ impl Component for Model {
     type Properties = ();
 
     fn create(_: Self::Properties, mut link: ComponentLink<Self>) -> Self {
-        let (agentaddr, _sse_con) = connect_sse(&mut link);
+        let agentaddr = parse_params();
+        let sse_con = match agentaddr {
+            Some(ref agentaddr) => connect_sse(&agentaddr, &mut link),
+            None => None,
+        };
 
-        let mut fetch_tasks = vec![];
-        if let Some(ref agentaddr) = agentaddr {
-            match request_chdir(
-                &agentaddr,
-                &mut link,
-                PortableOsString::from("."),
-            ) {
-                Ok(fetch_task) => fetch_tasks.push(fetch_task),
-                Err(e) => {
-                    ConsoleService::error(&format!(
-                        "Request chdir failed {:?}",
-                        e
-                    ));
-                }
-            }
-        }
-
-        Model {
+        let mut model = Model {
             agentaddr,
             dir_path_element: NodeRef::default(),
             entries_element: NodeRef::default(),
-            fetch_tasks,
+            fetch_tasks: vec![],
             link,
             links_list_element:
                 WeakComponentLink::<CharacterSheetLinkList>::default(),
             sheets_list_element:
                 WeakComponentLink::<CharacterSheetList>::default(),
-            _sse_con,
+            _sse_con: sse_con,
+        };
+
+        if let Err(e) = model.request_chdir(&PortableOsString::from(".")) {
+            ConsoleService::error(&format!("Request chdir failed {:?}", e));
         }
+
+        model
     }
 
     fn change(&mut self, _: Self::Properties) -> bool {
@@ -320,47 +324,26 @@ impl Component for Model {
         match msg {
             Msg::DirectoryEntrySelected(entry) => {
                 match entry {
-                    FileEntry::Directory(path) => {
-                        match request_chdir(
-                            self.agentaddr.as_ref().unwrap(),
-                            &mut self.link,
-                            path,
-                        ) {
-                            Ok(fetch_task) => self.fetch_tasks.push(fetch_task),
-                            Err(e) => {
-                                ConsoleService::error(&format!(
-                                    "Request chdir failed {:?}",
-                                    e
-                                ));
-                            }
+                    FileEntry::Directory(ref path) => {
+                        if let Err(e) = self.request_chdir(path) {
+                            ConsoleService::error(&format!(
+                                "Request chdir failed {:?}",
+                                e
+                            ));
                         };
                     }
                     FileEntry::GCSFile(path) => {
-                        match request_watch(
-                            self.agentaddr.as_ref().unwrap(),
-                            &mut self.link,
-                            path.clone(),
-                        ) {
-                            Ok(fetch_task) => self.fetch_tasks.push(fetch_task),
-                            Err(e) => {
-                                ConsoleService::error(&format!(
-                                    "Request watch failed {:?}",
-                                    e
-                                ));
-                            }
+                        if let Err(e) = self.request_watch(&path) {
+                            ConsoleService::error(&format!(
+                                "Request watch failed {:?}",
+                                e
+                            ));
                         };
-                        match request_read(
-                            self.agentaddr.as_ref().unwrap(),
-                            &mut self.link,
-                            path,
-                        ) {
-                            Ok(fetch_task) => self.fetch_tasks.push(fetch_task),
-                            Err(e) => {
-                                ConsoleService::error(&format!(
-                                    "Request read failed {:?}",
-                                    e
-                                ));
-                            }
+                        if let Err(e) = self.request_read(path) {
+                            ConsoleService::error(&format!(
+                                "Request read failed {:?}",
+                                e
+                            ));
                         };
                     }
                 };
@@ -373,34 +356,20 @@ impl Component for Model {
                     .unwrap()
                     .value()
                     .into();
-                match request_chdir(
-                    self.agentaddr.as_ref().unwrap(),
-                    &mut self.link,
-                    path,
-                ) {
-                    Ok(fetch_task) => self.fetch_tasks.push(fetch_task),
-                    Err(e) => {
-                        ConsoleService::error(&format!(
-                            "Request chdir failed {:?}",
-                            e
-                        ));
-                    }
+                if let Err(e) = self.request_chdir(&path) {
+                    ConsoleService::error(&format!(
+                        "Request chdir failed {:?}",
+                        e
+                    ));
                 };
                 false
             }
             Msg::FileChange(path) => {
-                match request_read(
-                    self.agentaddr.as_ref().unwrap(),
-                    &mut self.link,
-                    path,
-                ) {
-                    Ok(fetch_task) => self.fetch_tasks.push(fetch_task),
-                    Err(e) => {
-                        ConsoleService::error(&format!(
-                            "Request read failed {:?}",
-                            e
-                        ));
-                    }
+                if let Err(e) = self.request_read(path) {
+                    ConsoleService::error(&format!(
+                        "Request read failed {:?}",
+                        e
+                    ));
                 };
                 false
             }
@@ -410,17 +379,11 @@ impl Component for Model {
                     .cast::<HtmlInputElement>()
                     .expect("dir_path instantiated")
                     .set_value(&path.to_str_lossy());
-                match request_lsdir(
-                    self.agentaddr.as_ref().unwrap(),
-                    &mut self.link,
-                ) {
-                    Ok(fetch_task) => self.fetch_tasks.push(fetch_task),
-                    Err(e) => {
-                        ConsoleService::error(&format!(
-                            "Request lsdir failed {:?}",
-                            e
-                        ));
-                    }
+                if let Err(e) = self.request_lsdir() {
+                    ConsoleService::error(&format!(
+                        "Request lsdir failed {:?}",
+                        e
+                    ));
                 };
 
                 false
