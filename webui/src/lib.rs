@@ -5,6 +5,7 @@ mod navlist;
 mod sheetlist;
 mod weakcomponentlink;
 
+use anyhow::anyhow;
 use url::Url;
 use wasm_bindgen::prelude::*;
 use web_sys::{
@@ -37,7 +38,7 @@ pub struct Model {
     link: ComponentLink<Self>,
     links_list_element: WeakComponentLink<CharacterSheetLinkList>,
     sheets_list_element: WeakComponentLink<CharacterSheetList>,
-    _sse_con: Option<EventSourceTask>,
+    sse_con: Option<EventSourceTask>,
 }
 
 impl Model {
@@ -60,6 +61,38 @@ impl Model {
             .uri(uri.as_str())
             .method(method)
             .body(body)?)
+    }
+
+    fn connect_sse(&mut self) -> Result<(), anyhow::Error> {
+        let mut uri = match self.agentaddr {
+            Some(ref agentaddr) => agentaddr.clone(),
+            None => anyhow::bail!("No agent address"),
+        };
+        uri.set_path("/sse");
+
+        let mut sse_con = EventSourceService::new()
+            .connect(
+                uri.as_str(),
+                self.link.callback(|status| {
+                    if status == EventSourceStatus::Error {
+                        ConsoleService::error("event source error");
+                    }
+                    Msg::Ignore
+                }),
+            )
+            .map_err(|s| anyhow!("SSE Connect failed: {}", s))?;
+        sse_con.add_event_listener(
+            "file_change",
+            self.link.callback(|Json(data)| match data {
+                Ok(path) => Msg::FileChange(path),
+                Err(e) => {
+                    ConsoleService::error(&format!("{:?}", e));
+                    Msg::Ignore
+                }
+            }),
+        );
+        self.sse_con = Some(sse_con);
+        Ok(())
     }
 
     fn request_chdir(
@@ -250,51 +283,12 @@ fn parse_params() -> Option<Url> {
     agentaddr
 }
 
-fn connect_sse(
-    agentaddr: &Url,
-    link: &mut ComponentLink<Model>,
-) -> Option<EventSourceTask> {
-    let mut agentaddr = agentaddr.clone();
-    agentaddr.set_path("/sse");
-
-    let mut sse_con = match EventSourceService::new().connect(
-        agentaddr.as_str(),
-        link.callback(|status| {
-            if status == EventSourceStatus::Error {
-                ConsoleService::error("event source error");
-            }
-            Msg::Ignore
-        }),
-    ) {
-        Ok(sse_con) => sse_con,
-        Err(e) => {
-            ConsoleService::error(&format!("sse connect failed {:?}", e));
-            return None;
-        }
-    };
-    sse_con.add_event_listener(
-        "file_change",
-        link.callback(|Json(data)| match data {
-            Ok(path) => Msg::FileChange(path),
-            Err(e) => {
-                ConsoleService::error(&format!("{:?}", e));
-                Msg::Ignore
-            }
-        }),
-    );
-    Some(sse_con)
-}
-
 impl Component for Model {
     type Message = Msg;
     type Properties = ();
 
-    fn create(_: Self::Properties, mut link: ComponentLink<Self>) -> Self {
+    fn create(_: Self::Properties, link: ComponentLink<Self>) -> Self {
         let agentaddr = parse_params();
-        let sse_con = match agentaddr {
-            Some(ref agentaddr) => connect_sse(&agentaddr, &mut link),
-            None => None,
-        };
 
         let mut model = Model {
             agentaddr,
@@ -306,8 +300,12 @@ impl Component for Model {
                 WeakComponentLink::<CharacterSheetLinkList>::default(),
             sheets_list_element:
                 WeakComponentLink::<CharacterSheetList>::default(),
-            _sse_con: sse_con,
+            sse_con: None,
         };
+
+        if let Err(e) = model.connect_sse() {
+            ConsoleService::error(&format!("Connect sse failed {:?}", e));
+        }
 
         if let Err(e) = model.request_chdir(&PortableOsString::from(".")) {
             ConsoleService::error(&format!("Request chdir failed {:?}", e));
