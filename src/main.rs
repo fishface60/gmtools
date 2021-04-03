@@ -1,4 +1,4 @@
-#![allow(clippy::single_component_path_imports)]
+#![allow(clippy::single_component_path_imports, clippy::upper_case_acronyms)]
 
 use std::{
     collections::{hash_map::Entry, HashMap},
@@ -38,7 +38,7 @@ use notify::{
 
 use url::{self, Url};
 
-use warp::{self, Filter, Rejection};
+use warp::{self, reject::Reject, Filter, Rejection, Reply};
 use warp_sessions::{
     self, CookieOptions, MemoryStore, SameSiteCookieOption, SessionWithStore,
 };
@@ -159,6 +159,90 @@ async fn router_handler(
     Ok(())
 }
 
+#[derive(Debug)]
+enum Rejections {
+    MalformedBody(Box<bincode::ErrorKind>),
+    SessionDataUnserializable(serde_json::Error),
+    BincodeReplyUnserializable(Box<bincode::ErrorKind>),
+    CBORReplyUnserializable(serde_cbor::error::Error),
+    NoCurdirRelativePath(PathBuf),
+    NoCurdirToLs,
+    LsDirError(std::io::Error),
+    ReadError(PathBuf, std::io::Error),
+    SheetParseError(PathBuf, serde_json::Error),
+    WatchError(PathBuf, notify::Error),
+}
+
+impl Reject for Rejections {}
+
+async fn handle_rejection(
+    err: Rejection,
+) -> std::result::Result<impl Reply, Rejection> {
+    let (code, message) = if let Some(e) = err.find::<Rejections>() {
+        match e {
+            Rejections::MalformedBody(e) => {
+                let msg = format!("Deserialize failed: {:?}", e);
+                eprintln!("{}", msg);
+                (StatusCode::BAD_REQUEST, msg)
+            }
+            Rejections::SessionDataUnserializable(e) => {
+                let msg = format!("Session data serialize failed: {:?}", e);
+                eprintln!("{}", msg);
+                (StatusCode::INTERNAL_SERVER_ERROR, msg)
+            }
+            Rejections::BincodeReplyUnserializable(e) => {
+                let msg = format!("Reply serialize failed: {:?}", e);
+                eprintln!("{}", msg);
+                (StatusCode::INTERNAL_SERVER_ERROR, msg)
+            }
+            Rejections::CBORReplyUnserializable(e) => {
+                let msg = format!("Reply serialize failed: {:?}", e);
+                eprintln!("{}", msg);
+                (StatusCode::INTERNAL_SERVER_ERROR, msg)
+            }
+            Rejections::NoCurdirRelativePath(path) => {
+                let msg = format!(
+                    "Couldn't use path {:?}, path is relative and have no \
+                     current directory",
+                    path
+                );
+                eprintln!("{}", msg);
+                (StatusCode::PRECONDITION_REQUIRED, msg)
+            }
+            Rejections::NoCurdirToLs => {
+                let msg = "No current directory to list".to_string();
+                eprintln!("{}", msg);
+                (StatusCode::PRECONDITION_REQUIRED, msg)
+            }
+            Rejections::LsDirError(e) => {
+                let msg = format!("lsdir failed: {:?}", e);
+                eprintln!("{}", msg);
+                (StatusCode::INTERNAL_SERVER_ERROR, msg)
+            }
+            Rejections::ReadError(path, e) => {
+                let msg = format!("Couldn't read {:?}: {:?}", path, e);
+                eprintln!("{}", msg);
+                (StatusCode::NOT_FOUND, msg)
+            }
+            Rejections::SheetParseError(path, e) => {
+                let msg = format!("Couldn't parse {:?}: {:?}", path, e);
+                eprintln!("{}", msg);
+                (StatusCode::NOT_FOUND, msg)
+            }
+            Rejections::WatchError(path, e) => {
+                let msg = format!("Watch {:?} failed: {:?}", path, e);
+                eprintln!("{}", msg);
+                (StatusCode::INTERNAL_SERVER_ERROR, msg)
+            }
+        }
+    } else {
+        // propagate err
+        return Err(err);
+    };
+
+    Ok(warp::reply::with_status(message, code))
+}
+
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let (message_tx, message_rx) = unbounded_channel::<RouterMessage>();
@@ -208,275 +292,6 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     warp::reply::html(WEBUI),
                     session_with_store,
                 ))
-            },
-        )
-        .untuple_one()
-        .and_then(warp_sessions::reply::with_session);
-    let post_chdir = warp::path("chdir")
-        .and(warp::post())
-        .and(with_session.clone())
-        .and(warp::body::bytes())
-        .and_then(
-            move |mut session_with_store: SessionWithStore<MemoryStore>,
-                  body: hyper::body::Bytes| async move {
-                let path: PortableOsString = match bincode::deserialize(&body) {
-                    Ok(path) => path,
-                    Err(e) => {
-                        let msg = format!("Path deserialize failed: {:?}", e);
-                        eprintln!("{}", msg);
-                        return Ok::<_, Rejection>((
-                            warp::reply::with_status(
-                                msg.into_bytes(),
-                                StatusCode::BAD_REQUEST,
-                            ),
-                            session_with_store,
-                        ));
-                    }
-                };
-                let path: PathBuf = path.try_into().expect("native OsString");
-
-                let session = &mut session_with_store.session;
-                let mut curdir = session
-                    .get::<Option<PathBuf>>("curdir")
-                    .unwrap_or_default();
-                // Initialize default current dir
-                if curdir.is_none() {
-                    match std::env::current_dir() {
-                        Ok(dir) => curdir = Some(dir),
-                        Err(e) => eprintln!("Current dir missing {:?}", e),
-                    }
-                }
-
-                // Update current directory
-                let chdir_result = if let Some(ref mut curdir) = curdir {
-                    curdir.push(path);
-                    match tokio::fs::canonicalize(&curdir).await {
-                        Ok(path) => *curdir = path,
-                        Err(e) => {
-                            // Warn that canonicalize failed,
-                            // but keep using curdir
-                            eprintln!(
-                                "Canonicalize for {:?} failed: {:?}",
-                                curdir, e
-                            );
-                        }
-                    }
-                    match bincode::serialize(&PortableOsString::from(
-                        curdir.clone(),
-                    )) {
-                        Ok(bytes) => {
-                            warp::reply::with_status(bytes, StatusCode::OK)
-                        }
-                        Err(e) => {
-                            let msg =
-                                format!("Couldn't serialize result: {:?}", e);
-                            eprintln!("{}", msg);
-                            warp::reply::with_status(
-                                msg.into_bytes(),
-                                StatusCode::PRECONDITION_REQUIRED,
-                            )
-                        }
-                    }
-                } else if path.is_absolute() {
-                    curdir = Some(path.clone());
-                    match bincode::serialize(&PortableOsString::from(path)) {
-                        Ok(bytes) => {
-                            warp::reply::with_status(bytes, StatusCode::OK)
-                        }
-                        Err(e) => {
-                            let msg =
-                                format!("Couldn't serialize result: {:?}", e);
-                            eprintln!("{}", msg);
-                            warp::reply::with_status(
-                                msg.into_bytes(),
-                                StatusCode::PRECONDITION_REQUIRED,
-                            )
-                        }
-                    }
-                } else {
-                    let msg = format!(
-                        "Couldn't chdir to {:?}, \
-                         path is relative and have no \
-                         current directory",
-                        path
-                    );
-                    eprintln!("{}", msg);
-                    warp::reply::with_status(
-                        msg.into_bytes(),
-                        StatusCode::PRECONDITION_REQUIRED,
-                    )
-                };
-
-                match session.insert("curdir", curdir) {
-                    Ok(()) => (),
-                    Err(e) => {
-                        let msg = format!("Couldn't serialize path: {:?}", e);
-                        eprintln!("{}", msg);
-                        return Ok((
-                            warp::reply::with_status(
-                                msg.into_bytes(),
-                                StatusCode::PRECONDITION_REQUIRED,
-                            ),
-                            session_with_store,
-                        ));
-                    }
-                }
-
-                Ok((chdir_result, session_with_store))
-            },
-        )
-        .untuple_one()
-        .and_then(warp_sessions::reply::with_session);
-    let get_lsdir = warp::path("lsdir")
-        .and(warp::get())
-        .and(with_session.clone())
-        .and_then(
-            move |mut session_with_store: SessionWithStore<MemoryStore>| async move {
-                let session = &mut session_with_store.session;
-                let curdir = session
-                    .get::<Option<PathBuf>>("curdir")
-                    .unwrap_or_default();
-
-                let path = if let Some(path) = curdir {
-                    path
-                } else {
-                    let msg = "No current directory to list".to_string();
-                    eprintln!("{}", msg);
-                    return Ok::<_, Rejection>((
-                        warp::reply::with_status(
-                            msg.into_bytes(),
-                            StatusCode::PRECONDITION_REQUIRED,
-                        ),
-                        session_with_store,
-                    ))
-                };
-
-                let list = match get_dir_file_entries(&path.into()).await {
-                    Ok(list) => list,
-                    Err(e) => {
-                        let msg =
-                            format!("Couldn't list dir: {:?}", e);
-                        eprintln!("{}", msg);
-                        return Ok((
-                            warp::reply::with_status(
-                                msg.into_bytes(),
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                            ),
-                            session_with_store,
-                        ))
-                    }
-                };
-
-                let reply = match bincode::serialize(&list) {
-                    Ok(bytes) => warp::reply::with_status(bytes, StatusCode::OK),
-                    Err(e) => {
-                       let msg =
-                           format!("Couldn't serialize result: {:?}", e);
-                       eprintln!("{}", msg);
-                       warp::reply::with_status(
-                           msg.into_bytes(),
-                           StatusCode::PRECONDITION_REQUIRED,
-                       )
-                    }
-                };
-                Ok((reply, session_with_store))
-            },
-        )
-        .untuple_one()
-        .and_then(warp_sessions::reply::with_session);
-    let post_read = warp::path("read")
-        .and(warp::post())
-        .and(with_session.clone())
-        .and(warp::body::bytes())
-        .and_then(
-            move |mut session_with_store: SessionWithStore<MemoryStore>,
-                  body: hyper::body::Bytes| async move {
-                let path: PortableOsString = match bincode::deserialize(&body) {
-                    Ok(path) => path,
-                    Err(e) => {
-                        let msg = format!("Path deserialize failed: {:?}", e);
-                        eprintln!("{}", msg);
-                        return Ok::<_, Rejection>((
-                            warp::reply::with_status(
-                                msg.into_bytes(),
-                                StatusCode::BAD_REQUEST,
-                            ),
-                            session_with_store,
-                        ));
-                    }
-                };
-                let path: PathBuf = path.try_into().expect("native OsString");
-
-                let session = &mut session_with_store.session;
-                let curdir = session
-                    .get::<Option<PathBuf>>("curdir")
-                    .unwrap_or_default();
-
-                let path = if let Some(ref curdir) = curdir {
-                    let mut dir = curdir.clone();
-                    dir.push(path);
-                    dir
-                } else if path.is_absolute() {
-                    path
-                } else {
-                    let msg = format!(
-                        "Couldn't read {:?}, \
-                         path is relative and have no \
-                         current directory",
-                        path
-                    );
-                    eprintln!("{}", msg);
-                    return Ok((
-                        warp::reply::with_status(
-                            msg.into_bytes(),
-                            StatusCode::PRECONDITION_REQUIRED,
-                        ),
-                        session_with_store,
-                    ));
-                };
-
-                let s = match tokio::fs::read_to_string(&path).await {
-                    Ok(s) => s,
-                    Err(e) => {
-                        let msg = format!("Couldn't read {:?}: {:?}", path, e);
-                        eprintln!("{}", msg);
-                        return Ok((
-                            warp::reply::with_status(
-                                msg.into_bytes(),
-                                StatusCode::NOT_FOUND,
-                            ),
-                            session_with_store,
-                        ));
-                    }
-                };
-                let file: gcs::FileKind = match serde_json::from_str(s.as_str())
-                {
-                    Ok(file) => file,
-                    Err(e) => {
-                        let msg = format!("Couldn't read {:?}: {:?}", path, e);
-                        eprintln!("{}", msg);
-                        return Ok((
-                            warp::reply::with_status(
-                                msg.into_bytes(),
-                                StatusCode::NOT_FOUND,
-                            ),
-                            session_with_store,
-                        ));
-                    }
-                };
-
-                let reply = match serde_cbor::to_vec(&file) {
-                    Ok(vec) => warp::reply::with_status(vec, StatusCode::OK),
-                    Err(e) => {
-                        let msg = format!("Serialize failed: {:?}", e);
-                        eprintln!("{}", msg);
-                        warp::reply::with_status(
-                            msg.into_bytes(),
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                        )
-                    }
-                };
-                Ok((reply, session_with_store))
             },
         )
         .untuple_one()
@@ -532,7 +347,156 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     }),
                 ))
             }
-        });
+        })
+        .recover(handle_rejection);
+    let post_chdir = warp::path("chdir")
+        .and(warp::post())
+        .and(with_session.clone())
+        .and(warp::body::bytes())
+        .and_then(
+            move |mut session_with_store: SessionWithStore<MemoryStore>,
+                  body: hyper::body::Bytes| async move {
+                let path: PortableOsString = bincode::deserialize(&body)
+                    .map_err(|e| {
+                        warp::reject::custom(Rejections::MalformedBody(e))
+                    })?;
+                let path: PathBuf = path.try_into().expect("native OsString");
+
+                let session = &mut session_with_store.session;
+                let mut curdir = session
+                    .get::<Option<PathBuf>>("curdir")
+                    .unwrap_or_default();
+                // Initialize default current dir
+                if curdir.is_none() {
+                    match std::env::current_dir() {
+                        Ok(dir) => curdir = Some(dir),
+                        Err(e) => eprintln!("Current dir missing {:?}", e),
+                    }
+                }
+
+                // Update current directory
+                let (curdir, res_path) = if let Some(mut curdir) = curdir {
+                    curdir.push(path);
+                    let curdir = match tokio::fs::canonicalize(&curdir).await {
+                        Ok(canon) => canon,
+                        Err(e) => {
+                            // Warn that canonicalize failed,
+                            // but keep using curdir
+                            eprintln!(
+                                "Canonicalize for {:?} failed: {:?}",
+                                curdir, e
+                            );
+                            curdir
+                        }
+                    };
+                    (Some(curdir.clone()), PortableOsString::from(curdir))
+                } else if path.is_absolute() {
+                    curdir = Some(path.clone());
+                    (curdir, PortableOsString::from(path))
+                } else {
+                    return Err(Rejection::from(
+                        Rejections::NoCurdirRelativePath(path),
+                    ));
+                };
+                let bytes = bincode::serialize(&res_path).map_err(|e| {
+                    warp::reject::custom(
+                        Rejections::BincodeReplyUnserializable(e),
+                    )
+                })?;
+                let reply = warp::reply::with_status(bytes, StatusCode::OK);
+
+                session
+                    .insert("curdir", curdir)
+                    .map_err(Rejections::SessionDataUnserializable)?;
+
+                Ok::<_, Rejection>((reply, session_with_store))
+            },
+        )
+        .untuple_one()
+        .and_then(warp_sessions::reply::with_session)
+        .recover(handle_rejection);
+    let get_lsdir = warp::path("lsdir")
+        .and(warp::get())
+        .and(with_session.clone())
+        .and_then(
+            move |mut session_with_store: SessionWithStore<MemoryStore>| async move {
+                let session = &mut session_with_store.session;
+                let curdir = session
+                    .get::<Option<PathBuf>>("curdir")
+                    .unwrap_or_default();
+
+                let path = curdir.ok_or_else(||
+                    warp::reject::custom(Rejections::NoCurdirToLs))?;
+
+                let list = get_dir_file_entries(&path.into()).await.map_err(
+                    Rejections::LsDirError)?;
+
+                let bytes = bincode::serialize(&list).map_err(|e| {
+                    warp::reject::custom(
+                        Rejections::BincodeReplyUnserializable(e),
+                    )
+                })?;
+                let reply = warp::reply::with_status(bytes, StatusCode::OK);
+                Ok::<_, Rejection>((reply, session_with_store))
+            },
+        )
+        .untuple_one()
+        .and_then(warp_sessions::reply::with_session)
+        .recover(handle_rejection);
+    let post_read = warp::path("read")
+        .and(warp::post())
+        .and(with_session.clone())
+        .and(warp::body::bytes())
+        .and_then(
+            move |mut session_with_store: SessionWithStore<MemoryStore>,
+                  body: hyper::body::Bytes| async move {
+                let path: PortableOsString = bincode::deserialize(&body)
+                    .map_err(|e| {
+                        warp::reject::custom(Rejections::MalformedBody(e))
+                    })?;
+                let path: PathBuf = path.try_into().expect("native OsString");
+
+                let session = &mut session_with_store.session;
+                let curdir = session
+                    .get::<Option<PathBuf>>("curdir")
+                    .unwrap_or_default();
+
+                let path = if let Some(ref curdir) = curdir {
+                    let mut dir = curdir.clone();
+                    dir.push(path);
+                    dir
+                } else if path.is_absolute() {
+                    path
+                } else {
+                    return Err(Rejection::from(
+                        Rejections::NoCurdirRelativePath(path),
+                    ));
+                };
+
+                let s =
+                    tokio::fs::read_to_string(&path).await.map_err(|e| {
+                        warp::reject::custom(Rejections::ReadError(
+                            path.clone(),
+                            e,
+                        ))
+                    })?;
+                let file: gcs::FileKind = serde_json::from_str(s.as_str())
+                    .map_err(|e| {
+                        warp::reject::custom(Rejections::SheetParseError(
+                            path, e,
+                        ))
+                    })?;
+
+                let bytes = serde_cbor::to_vec(&file).map_err(|e| {
+                    warp::reject::custom(Rejections::CBORReplyUnserializable(e))
+                })?;
+                let reply = warp::reply::with_status(bytes, StatusCode::OK);
+                Ok::<_, Rejection>((reply, session_with_store))
+            },
+        )
+        .untuple_one()
+        .and_then(warp_sessions::reply::with_session)
+        .recover(handle_rejection);
     let post_watch = warp::path("watch")
         .and(warp::post())
         .and(with_session.clone())
@@ -542,22 +506,10 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                   body: hyper::body::Bytes| {
                 let watcher_ref = Arc::clone(&watcher_ref);
                 async move {
-                    let path: PortableOsString =
-                        match bincode::deserialize(&body) {
-                            Ok(path) => path,
-                            Err(e) => {
-                                let msg =
-                                    format!("Path deserialize failed: {:?}", e);
-                                eprintln!("{}", msg);
-                                return Ok::<_, Rejection>((
-                                    warp::reply::with_status(
-                                        msg.into_bytes(),
-                                        StatusCode::BAD_REQUEST,
-                                    ),
-                                    session_with_store,
-                                ));
-                            }
-                        };
+                    let path: PortableOsString = bincode::deserialize(&body)
+                        .map_err(|e| {
+                            warp::reject::custom(Rejections::MalformedBody(e))
+                        })?;
                     let path: PathBuf =
                         path.try_into().expect("native OsString");
 
@@ -573,38 +525,25 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     } else if path.is_absolute() {
                         path
                     } else {
-                        let msg = format!(
-                            "Couldn't watch {:?}, \
-                             path is relative and have no \
-                             current directory",
-                            path
-                        );
-                        eprintln!("{}", msg);
-                        return Ok((
-                            warp::reply::with_status(
-                                msg.into_bytes(),
-                                StatusCode::PRECONDITION_REQUIRED,
-                            ),
-                            session_with_store,
+                        return Err(Rejection::from(
+                            Rejections::NoCurdirRelativePath(path),
                         ));
                     };
 
-                    if let Err(e) = watcher_ref.lock_arc().await.watch(
-                        OsString::try_from(path.clone())
-                            .expect("Native os string"),
-                        RecursiveMode::NonRecursive,
-                    ) {
-                        let msg = format!("Watch {:?} failed {:?}", path, e);
-                        eprintln!("{}", msg);
-                        return Ok((
-                            warp::reply::with_status(
-                                msg.into_bytes(),
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                            ),
-                            session_with_store,
-                        ));
-                    }
-                    Ok((
+                    watcher_ref
+                        .lock_arc()
+                        .await
+                        .watch(
+                            OsString::try_from(path.clone())
+                                .expect("Native os string"),
+                            RecursiveMode::NonRecursive,
+                        )
+                        .map_err(|e| {
+                            warp::reject::custom(Rejections::WatchError(
+                                path, e,
+                            ))
+                        })?;
+                    Ok::<_, Rejection>((
                         warp::reply::with_status(vec![], StatusCode::OK),
                         session_with_store,
                     ))
@@ -612,13 +551,14 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
             },
         )
         .untuple_one()
-        .and_then(warp_sessions::reply::with_session);
+        .and_then(warp_sessions::reply::with_session)
+        .recover(handle_rejection);
 
     let routes = get_webui
+        .or(get_sse)
         .or(post_chdir)
         .or(get_lsdir)
         .or(post_read)
-        .or(get_sse)
         .or(post_watch);
     let http_addr = SocketAddr::from(([127, 0, 0, 1], 0));
     let (http_addr, server) =
