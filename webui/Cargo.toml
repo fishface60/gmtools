@@ -14,6 +14,7 @@ crate-type = ["cdylib", "rlib"]
 anyhow = "*"
 base64 = "*"
 bincode = "*"
+console_error_panic_hook = "*"
 gcs = { path = "../gcs" }
 gmtool-common = { path = "../gmtool_common" }
 futures = "0.3"
