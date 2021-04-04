@@ -254,6 +254,7 @@ async fn handle_rejection(
 
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
+    pretty_env_logger::init();
     let (message_tx, message_rx) = unbounded_channel::<RouterMessage>();
 
     // Spawn file watcher thread
