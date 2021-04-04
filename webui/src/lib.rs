@@ -8,6 +8,7 @@ mod weakcomponentlink;
 use std::convert::TryInto;
 
 use anyhow::anyhow;
+use log::{debug, error, info, warn};
 use url::Url;
 use wasm_bindgen::prelude::*;
 use web_sys::{
@@ -19,7 +20,7 @@ use yew::{
     html,
     services::{
         fetch::{FetchTask, Method, Request, Response},
-        ConsoleService, FetchService, Task,
+        FetchService, Task,
     },
     ChangeData, Component, ComponentLink, Html, NodeRef, ShouldRender,
 };
@@ -77,10 +78,7 @@ impl Model {
         )?;
         let clos = |response: Response<Nothing>| {
             if !response.status().is_success() {
-                ConsoleService::warn(&format!(
-                    "Auth returned {}",
-                    response.status()
-                ));
+                warn!("Auth returned {}", response.status());
                 return Msg::Ignore;
             }
             Msg::Authenticated { connect_sse: true }
@@ -102,7 +100,7 @@ impl Model {
                 uri.as_str(),
                 self.link.callback(|status| {
                     if status == EventSourceStatus::Error {
-                        ConsoleService::error("event source error");
+                        error!("event source error");
                     }
                     Msg::Ignore
                 }),
@@ -113,7 +111,7 @@ impl Model {
             self.link.callback(|Json(data)| match data {
                 Ok(path) => Msg::FileChange(path),
                 Err(e) => {
-                    ConsoleService::error(&format!("{:?}", e));
+                    error!("{:?}", e);
                     Msg::Ignore
                 }
             }),
@@ -135,14 +133,14 @@ impl Model {
             let bytes = match response.into_body() {
                 Ok(bytes) => bytes,
                 Err(e) => {
-                    ConsoleService::error(&format!("{:?}", e));
+                    error!("{:?}", e);
                     return Msg::Ignore;
                 }
             };
             let contents = match bincode::deserialize(&bytes) {
                 Ok(contents) => contents,
                 Err(e) => {
-                    ConsoleService::error(&format!("{:?}", e));
+                    error!("{:?}", e);
                     return Msg::Ignore;
                 }
             };
@@ -159,14 +157,14 @@ impl Model {
             let bytes = match response.into_body() {
                 Ok(bytes) => bytes,
                 Err(e) => {
-                    ConsoleService::error(&format!("{:?}", e));
+                    error!("{:?}", e);
                     return Msg::Ignore;
                 }
             };
             let contents = match bincode::deserialize(&bytes) {
                 Ok(contents) => contents,
                 Err(e) => {
-                    ConsoleService::error(&format!("{:?}", e));
+                    error!("{:?}", e);
                     return Msg::Ignore;
                 }
             };
@@ -190,20 +188,14 @@ impl Model {
             let bytes = match response.into_body() {
                 Ok(bytes) => bytes,
                 Err(e) => {
-                    ConsoleService::error(&format!(
-                        "Response into body: {:?}",
-                        e
-                    ));
+                    error!("Response into body: {:?}", e);
                     return Msg::Ignore;
                 }
             };
             let contents = match serde_cbor::from_slice(&bytes) {
                 Ok(contents) => contents,
                 Err(e) => {
-                    ConsoleService::error(&format!(
-                        "Body deserialize: {:?}",
-                        e
-                    ));
+                    error!("Body deserialize: {:?}", e);
                     return Msg::Ignore;
                 }
             };
@@ -225,9 +217,9 @@ impl Model {
             Ok(bincode::serialize(path)?),
         )?;
         let clos = move |response: Response<Result<Vec<u8>, anyhow::Error>>| {
-            ConsoleService::debug(&format!("watch response: {:?}", &response));
+            debug!("watch response: {:?}", &response);
             if let Err(e) = response.into_body() {
-                ConsoleService::error(&format!("{:?}", e));
+                error!("{:?}", e);
             }
             Msg::Ignore
         };
@@ -252,21 +244,21 @@ pub enum Msg {
 fn parse_params() -> (Option<Url>, Option<u32>) {
     let window = match web_sys::window() {
         None => {
-            ConsoleService::error("window object exists");
+            error!("no window object exists");
             return (None, None);
         }
         Some(window) => window,
     };
     let href = match window.location().href() {
         Err(e) => {
-            ConsoleService::error(&format!("window missing url {:?}", e));
+            error!("window missing url {:?}", e);
             return (None, None);
         }
         Ok(href) => href,
     };
     let url = match Url::parse(&href) {
         Err(e) => {
-            ConsoleService::error(&format!("window url parse failed {:?}", e));
+            error!("window url parse failed {:?}", e);
             return (None, None);
         }
         Ok(url) => url,
@@ -283,10 +275,7 @@ fn parse_params() -> (Option<Url>, Option<u32>) {
             let array = match base64::decode(v.into_owned()) {
                 Ok(vec) => vec.try_into().expect("Token 4 bytes"),
                 Err(e) => {
-                    ConsoleService::error(&format!(
-                        "token decode failed {:?}",
-                        e
-                    ));
+                    error!("token decode failed {:?}", e);
                     continue;
                 }
             };
@@ -299,13 +288,13 @@ fn parse_params() -> (Option<Url>, Option<u32>) {
 
     match window.history() {
         Err(e) => {
-            ConsoleService::warn(&format!("could not access history: {:?}", e));
+            warn!("could not access history: {:?}", e);
         }
         Ok(hst) => {
             if let Err(e) =
                 hst.replace_state_with_url(&JsValue::NULL, "", Some("/webui"))
             {
-                ConsoleService::warn(&format!("could not change url: {:?}", e));
+                warn!("could not change url: {:?}", e);
             }
         }
     }
@@ -313,14 +302,14 @@ fn parse_params() -> (Option<Url>, Option<u32>) {
     let agentaddr = match agentaddr {
         Some(agentaddr) => agentaddr.to_string(),
         None => {
-            ConsoleService::info("url did not include agentaddr");
+            info!("url did not include agentaddr");
             href
         }
     };
 
     let agentaddr = match Url::parse(&agentaddr) {
         Err(e) => {
-            ConsoleService::error(&format!("agentaddr parse failed {:?}", e));
+            error!("agentaddr parse failed {:?}", e);
             return (None, None);
         }
         Ok(agentaddr) => Some(agentaddr),
@@ -351,11 +340,11 @@ impl Component for Model {
         };
 
         if let Err(e) = model.request_auth() {
-            ConsoleService::error(&format!("Auth failed: {:?}", e));
+            error!("Auth failed: {:?}", e);
         }
 
         if let Err(e) = model.request_chdir(&PortableOsString::from(".")) {
-            ConsoleService::error(&format!("Request chdir failed {:?}", e));
+            error!("Request chdir failed {:?}", e);
         }
 
         model
@@ -370,10 +359,7 @@ impl Component for Model {
             Msg::Authenticated { connect_sse } => {
                 if connect_sse {
                     if let Err(e) = self.connect_sse() {
-                        ConsoleService::error(&format!(
-                            "Connect sse failed {:?}",
-                            e
-                        ));
+                        error!("Connect sse failed {:?}", e);
                     }
                 }
                 false
@@ -382,24 +368,15 @@ impl Component for Model {
                 match entry {
                     FileEntry::Directory(ref path) => {
                         if let Err(e) = self.request_chdir(path) {
-                            ConsoleService::error(&format!(
-                                "Request chdir failed {:?}",
-                                e
-                            ));
+                            error!("Request chdir failed {:?}", e);
                         };
                     }
                     FileEntry::GCSFile(path) => {
                         if let Err(e) = self.request_watch(&path) {
-                            ConsoleService::error(&format!(
-                                "Request watch failed {:?}",
-                                e
-                            ));
+                            error!("Request watch failed {:?}", e);
                         };
                         if let Err(e) = self.request_read(path) {
-                            ConsoleService::error(&format!(
-                                "Request read failed {:?}",
-                                e
-                            ));
+                            error!("Request read failed {:?}", e);
                         };
                     }
                 };
@@ -413,19 +390,13 @@ impl Component for Model {
                     .value()
                     .into();
                 if let Err(e) = self.request_chdir(&path) {
-                    ConsoleService::error(&format!(
-                        "Request chdir failed {:?}",
-                        e
-                    ));
+                    error!("Request chdir failed {:?}", e);
                 };
                 false
             }
             Msg::FileChange(path) => {
                 if let Err(e) = self.request_read(path) {
-                    ConsoleService::error(&format!(
-                        "Request read failed {:?}",
-                        e
-                    ));
+                    error!("Request read failed {:?}", e);
                 };
                 false
             }
@@ -436,10 +407,7 @@ impl Component for Model {
                     .expect("dir_path instantiated")
                     .set_value(&path.to_str_lossy());
                 if let Err(e) = self.request_lsdir() {
-                    ConsoleService::error(&format!(
-                        "Request lsdir failed {:?}",
-                        e
-                    ));
+                    error!("Request lsdir failed {:?}", e);
                 };
 
                 false
@@ -479,7 +447,7 @@ impl Component for Model {
                             entries_element
                                 .add_with_html_option_element(&option)
                                 .unwrap();
-                            ConsoleService::log(&format!("File {:?}", name));
+                            debug!("File {:?}", name);
                         }
                         FileEntry::Directory(ref name) => {
                             text.clear();
@@ -494,10 +462,7 @@ impl Component for Model {
                             entries_element
                                 .add_with_html_option_element(&option)
                                 .unwrap();
-                            ConsoleService::log(&format!(
-                                "Directory {:?}",
-                                name
-                            ));
+                            debug!("Directory {:?}", name);
                         }
                     }
                 }
@@ -514,7 +479,7 @@ impl Component for Model {
                         gcs::character::Character::V1(character),
                     ) => character,
                     _ => {
-                        ConsoleService::error("File not V1 character");
+                        error!("File not V1 character");
                         return false;
                     }
                 };
@@ -607,6 +572,7 @@ impl Component for Model {
 #[wasm_bindgen(start)]
 pub fn main() -> Result<(), JsValue> {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+    wasm_logger::init(wasm_logger::Config::default());
     yew::start_app::<Model>();
     Ok(())
 }

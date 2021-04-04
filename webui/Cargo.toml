@@ -18,10 +18,12 @@ console_error_panic_hook = "*"
 gcs = { path = "../gcs" }
 gmtool-common = { path = "../gmtool_common" }
 futures = "0.3"
+log = "*"
 serde_cbor = "*"
 serde_json = "*"
 url = "*"
 wasm-bindgen = "0.2"
+wasm-logger = "*"
 web-sys = { version = "*", features = ["HtmlOptionElement", "HtmlSelectElement", "History", "InputEvent"] }
 yew = "0.17.*"
 yew-event-source = "*"
