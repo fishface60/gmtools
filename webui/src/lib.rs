@@ -81,7 +81,7 @@ impl Model {
                 warn!("Auth returned {}", response.status());
                 return Msg::Ignore;
             }
-            Msg::Authenticated { connect_sse: true }
+            Msg::Authenticated
         };
         let task = FetchService::fetch_binary(req, self.link.callback(clos))?;
         self.fetch_tasks.push(task);
@@ -231,7 +231,7 @@ impl Model {
 
 #[derive(Debug)]
 pub enum Msg {
-    Authenticated { connect_sse: bool },
+    Authenticated,
     DirectoryEntrySelected(FileEntry),
     DirectoryPathSubmitted,
     FileChange(PortableOsString),
@@ -343,10 +343,6 @@ impl Component for Model {
             error!("Auth failed: {:?}", e);
         }
 
-        if let Err(e) = model.request_chdir(&PortableOsString::from(".")) {
-            error!("Request chdir failed {:?}", e);
-        }
-
         model
     }
 
@@ -356,12 +352,16 @@ impl Component for Model {
 
     fn update(&mut self, msg: Self::Message) -> ShouldRender {
         match msg {
-            Msg::Authenticated { connect_sse } => {
-                if connect_sse {
-                    if let Err(e) = self.connect_sse() {
-                        error!("Connect sse failed {:?}", e);
-                    }
+            Msg::Authenticated => {
+                if let Err(e) = self.connect_sse() {
+                    error!("Connect sse failed {:?}", e);
                 }
+
+                if let Err(e) = self.request_chdir(&PortableOsString::from("."))
+                {
+                    error!("Request chdir failed {:?}", e);
+                }
+
                 false
             }
             Msg::DirectoryEntrySelected(entry) => {
