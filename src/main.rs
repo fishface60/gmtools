@@ -31,6 +31,8 @@ use bincode;
 
 use hyper::StatusCode;
 
+use rand::Rng;
+
 use notify::{
     event::Event as NotifyEvent, RecommendedWatcher, RecursiveMode,
     Result as NotifyResult, Watcher,
@@ -171,9 +173,21 @@ enum Rejections {
     ReadError(PathBuf, std::io::Error),
     SheetParseError(PathBuf, serde_json::Error),
     WatchError(PathBuf, notify::Error),
+    Unauthorized,
 }
 
 impl Reject for Rejections {}
+
+async fn authorize(
+    session_with_store: SessionWithStore<MemoryStore>,
+) -> Result<SessionWithStore<MemoryStore>, Rejection> {
+    let session = &session_with_store.session;
+    let authenticated: bool = session.get("authenticated").unwrap_or_default();
+    if !authenticated {
+        return Err(warp::reject::custom(Rejections::Unauthorized));
+    }
+    Ok(session_with_store)
+}
 
 async fn handle_rejection(
     err: Rejection,
@@ -234,6 +248,9 @@ async fn handle_rejection(
                 eprintln!("{}", msg);
                 (StatusCode::INTERNAL_SERVER_ERROR, msg)
             }
+            Rejections::Unauthorized => {
+                (StatusCode::UNAUTHORIZED, "Unauthorized".to_string())
+            }
         }
     } else {
         // propagate err
@@ -283,6 +300,10 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let with_session =
         warp_sessions::request::with_session(session_store, cookie_options);
 
+    let mut rng = rand::thread_rng();
+    let secret: u32 = rng.gen();
+    let token = base64::encode(secret.to_le_bytes());
+
     let get_webui = warp::path("webui")
         .and(warp::get())
         .and(with_session.clone())
@@ -296,9 +317,35 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         )
         .untuple_one()
         .and_then(warp_sessions::reply::with_session);
+    let post_auth = warp::path("auth")
+        .and(warp::post())
+        .and(with_session.clone())
+        .and(warp::body::bytes())
+        .and_then(
+            move |mut session_with_store: SessionWithStore<MemoryStore>,
+                  body: hyper::body::Bytes| async move {
+                let req_secret: u32 =
+                    bincode::deserialize(&body).map_err(|e| {
+                        warp::reject::custom(Rejections::MalformedBody(e))
+                    })?;
+
+                let session = &mut session_with_store.session;
+                if secret == req_secret {
+                    session.insert("authenticated", true).map_err(|e| {
+                        Rejections::SessionDataUnserializable(e)
+                    })?;
+                }
+
+                Ok::<_, Rejection>((StatusCode::OK, session_with_store))
+            },
+        )
+        .untuple_one()
+        .and_then(warp_sessions::reply::with_session)
+        .recover(handle_rejection);
     let get_sse = warp::path("sse")
         .and(warp::get())
         .and(with_session.clone())
+        .and_then(authorize)
         .and_then(move |session_with_store: SessionWithStore<MemoryStore>| {
             let message_tx = message_tx.clone();
             async move {
@@ -352,6 +399,7 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let post_chdir = warp::path("chdir")
         .and(warp::post())
         .and(with_session.clone())
+        .and_then(authorize)
         .and(warp::body::bytes())
         .and_then(
             move |mut session_with_store: SessionWithStore<MemoryStore>,
@@ -418,6 +466,7 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let get_lsdir = warp::path("lsdir")
         .and(warp::get())
         .and(with_session.clone())
+        .and_then(authorize)
         .and_then(
             move |mut session_with_store: SessionWithStore<MemoryStore>| async move {
                 let session = &mut session_with_store.session;
@@ -446,6 +495,7 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let post_read = warp::path("read")
         .and(warp::post())
         .and(with_session.clone())
+        .and_then(authorize)
         .and(warp::body::bytes())
         .and_then(
             move |mut session_with_store: SessionWithStore<MemoryStore>,
@@ -500,6 +550,7 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let post_watch = warp::path("watch")
         .and(warp::post())
         .and(with_session.clone())
+        .and_then(authorize)
         .and(warp::body::bytes())
         .and_then(
             move |mut session_with_store: SessionWithStore<MemoryStore>,
@@ -555,11 +606,13 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .recover(handle_rejection);
 
     let routes = get_webui
+        .or(post_auth)
         .or(get_sse)
         .or(post_chdir)
         .or(get_lsdir)
         .or(post_read)
         .or(post_watch);
+
     let http_addr = SocketAddr::from(([127, 0, 0, 1], 0));
     let (http_addr, server) =
         warp::serve(routes).bind_with_graceful_shutdown(http_addr, async {
@@ -569,8 +622,10 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     println!("Bound server to {:?}", http_addr);
 
     let url = format!("http://{}", http_addr.to_string());
-    let mut url =
-        Url::parse_with_params(&url, &[("agentaddr", url.to_string())])?;
+    let mut url = Url::parse_with_params(
+        &url,
+        &[("agentaddr", url.to_string()), ("token", token)],
+    )?;
     url.set_path("/webui");
 
     // NOTE: Necessarily uses an executor specific spawn

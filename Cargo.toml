@@ -18,6 +18,7 @@ exclude = [
 
 [dependencies]
 async-std = "*"
+base64 = "*"
 bincode = "*"
 futures = "0.3.*"
 gcs = { path = "gcs" }
@@ -25,6 +26,7 @@ gmtool-common = { path = "gmtool_common" }
 hyper = { version = "0.14", features = ["full"] }
 notify = "5.0.0-pre.6"
 pin-project = "1.0"
+rand = "*"
 serde_cbor = "*"
 serde_json = "*"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
