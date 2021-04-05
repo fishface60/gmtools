@@ -1,5 +1,7 @@
 #![allow(clippy::single_component_path_imports)]
 
+use std::collections::BTreeMap;
+
 use yew::{
     self, html, Component, ComponentLink, Html, Properties, ShouldRender,
 };
@@ -11,7 +13,8 @@ use crate::weakcomponentlink::WeakComponentLink;
 #[derive(Clone, PartialEq, Properties)]
 pub struct Props {
     #[prop_or_default]
-    pub character_sheets: Vec<(PortableOsString, gcs::character::CharacterV1)>,
+    pub character_sheets:
+        BTreeMap<PortableOsString, gcs::character::CharacterV1>,
     #[prop_or_default]
     pub link_prefix: String,
     #[prop_or_default]
@@ -47,7 +50,7 @@ impl Component for CharacterSheetList {
     fn update(&mut self, msg: Self::Message) -> ShouldRender {
         match msg {
             Msg::SheetAdded(path, character) => {
-                self.props.character_sheets.push((path, character));
+                self.props.character_sheets.insert(path, character);
                 true
             }
         }
@@ -59,7 +62,9 @@ impl Component for CharacterSheetList {
             for self.props.character_sheets.iter().map(|(path, character)| {
               let (hp, maxHP) = character.get_hit_points();
               html! {
-                <div id=format!("{}{}", self.props.link_prefix, character.profile.name)>
+                <div id=format!("{}{}",
+                                self.props.link_prefix,
+                                path.to_str_lossy())>
                   <h2>{character.profile.name.clone()}</h2>
                   <input type="number" value=hp/>{"/"}{maxHP}
                 </div>

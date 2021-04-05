@@ -1,15 +1,19 @@
 #![allow(clippy::single_component_path_imports)]
 
+use std::collections::BTreeMap;
+
 use yew::{
     self, html, Component, ComponentLink, Html, Properties, ShouldRender,
 };
+
+use gmtool_common::PortableOsString;
 
 use crate::weakcomponentlink::WeakComponentLink;
 
 #[derive(Clone, PartialEq, Properties)]
 pub struct Props {
     #[prop_or_default]
-    pub names: Vec<String>,
+    pub names: BTreeMap<PortableOsString, String>,
     #[prop_or_default]
     pub link_prefix: String,
     #[prop_or_default]
@@ -21,7 +25,7 @@ pub struct CharacterSheetLinkList {
 }
 
 pub enum Msg {
-    SheetAdded(String),
+    SheetAdded(PortableOsString, String),
 }
 
 impl Component for CharacterSheetLinkList {
@@ -44,8 +48,8 @@ impl Component for CharacterSheetLinkList {
 
     fn update(&mut self, msg: Self::Message) -> ShouldRender {
         match msg {
-            Msg::SheetAdded(name) => {
-                self.props.names.push(name);
+            Msg::SheetAdded(path, name) => {
+                self.props.names.insert(path, name);
                 true
             }
         }
@@ -54,10 +58,12 @@ impl Component for CharacterSheetLinkList {
     fn view(&self) -> Html {
         html! {
           {
-            for self.props.names.iter().map(|name| {
+            for self.props.names.iter().map(|(path, name)| {
               html! {
                 <li>
-                  <a href=format!("#{}{}", self.props.link_prefix, name)>
+                  <a href=format!("#{}{}",
+                                  self.props.link_prefix,
+                                  path.to_str_lossy())>
                   {name}
                   </a>
                 </li>

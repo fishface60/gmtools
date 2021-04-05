@@ -485,6 +485,7 @@ impl Component for Model {
                 };
                 links_list.send_message(
                     <CharacterSheetLinkList as Component>::Message::SheetAdded(
+                        path.clone(),
                         character.profile.name.clone(),
                     ),
                 );
@@ -500,8 +501,6 @@ impl Component for Model {
     }
 
     fn view(&self) -> Html {
-        let sheets: Vec<(PortableOsString, gcs::character::CharacterV1)> =
-            vec![];
         html! {
           <>
             <div id="nav">
@@ -514,9 +513,7 @@ impl Component for Model {
                   <ul id="nav-sheets">
                   <CharacterSheetLinkList
                    link_prefix="sheets-"
-                   names=sheets.iter().map(|(_, sheet)| {
-                       sheet.profile.name.clone()
-                   }).collect::<Vec<String>>()
+                   names=std::collections::BTreeMap::new()
                    weak_link=&self.links_list_element
                   />
                   </ul>
@@ -527,7 +524,7 @@ impl Component for Model {
             <div id="sheets">
               <h1>{"Character Sheets"}</h1>
               <CharacterSheetList
-               character_sheets=sheets,
+               character_sheets=std::collections::BTreeMap::new()
                link_prefix="sheets-"
                weak_link=&self.sheets_list_element/>
             </div>
