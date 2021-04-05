@@ -353,8 +353,14 @@ impl Component for Model {
     fn update(&mut self, msg: Self::Message) -> ShouldRender {
         match msg {
             Msg::Authenticated => {
-                if let Err(e) = self.connect_sse() {
-                    error!("Connect sse failed {:?}", e);
+                let should_reconnect_sse = match self.sse_con {
+                    Some(ref sse_con) => !sse_con.is_active(),
+                    None => true,
+                };
+                if should_reconnect_sse {
+                    if let Err(e) = self.connect_sse() {
+                        error!("Connect sse failed {:?}", e);
+                    }
                 }
 
                 if let Err(e) = self.request_chdir(&PortableOsString::from("."))
