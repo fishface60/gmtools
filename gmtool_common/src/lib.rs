@@ -7,7 +7,7 @@ use std::{convert::TryFrom, ffi::OsString, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-//use gcs;
+use gcs;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum PortableOsString {
@@ -141,4 +141,11 @@ pub mod as_cbor {
         let v = Vec::<u8>::deserialize(deserializer)?;
         serde_cbor::from_slice(&v).map_err(Error::custom)
     }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ReadResponse {
+    pub path: PortableOsString,
+    #[serde(with = "as_cbor")]
+    pub contents: gcs::FileKind,
 }

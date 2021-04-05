@@ -47,7 +47,7 @@ use warp_sessions::{
 
 use webbrowser;
 
-use gmtool_common::{FileEntry, PortableOsString};
+use gmtool_common::{FileEntry, PortableOsString, ReadResponse};
 
 const WEBUI: &str = include_str!(env!("WEBUI_HTML_PATH"));
 
@@ -166,7 +166,6 @@ enum Rejections {
     MalformedBody(Box<bincode::ErrorKind>),
     SessionDataUnserializable(serde_json::Error),
     BincodeReplyUnserializable(Box<bincode::ErrorKind>),
-    CBORReplyUnserializable(serde_cbor::error::Error),
     NoCurdirRelativePath(PathBuf),
     NoCurdirToLs,
     LsDirError(std::io::Error),
@@ -205,11 +204,6 @@ async fn handle_rejection(
                 (StatusCode::INTERNAL_SERVER_ERROR, msg)
             }
             Rejections::BincodeReplyUnserializable(e) => {
-                let msg = format!("Reply serialize failed: {:?}", e);
-                eprintln!("{}", msg);
-                (StatusCode::INTERNAL_SERVER_ERROR, msg)
-            }
-            Rejections::CBORReplyUnserializable(e) => {
                 let msg = format!("Reply serialize failed: {:?}", e);
                 eprintln!("{}", msg);
                 (StatusCode::INTERNAL_SERVER_ERROR, msg)
@@ -530,15 +524,22 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                             e,
                         ))
                     })?;
-                let file: gcs::FileKind = serde_json::from_str(s.as_str())
+                let contents: gcs::FileKind = serde_json::from_str(s.as_str())
                     .map_err(|e| {
                         warp::reject::custom(Rejections::SheetParseError(
-                            path, e,
+                            path.clone(),
+                            e,
                         ))
                     })?;
 
-                let bytes = serde_cbor::to_vec(&file).map_err(|e| {
-                    warp::reject::custom(Rejections::CBORReplyUnserializable(e))
+                let bytes = bincode::serialize(&ReadResponse {
+                    path: path.into(),
+                    contents,
+                })
+                .map_err(|e| {
+                    warp::reject::custom(
+                        Rejections::BincodeReplyUnserializable(e),
+                    )
                 })?;
                 let reply = warp::reply::with_status(bytes, StatusCode::OK);
                 Ok::<_, Rejection>((reply, session_with_store))

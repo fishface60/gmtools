@@ -28,7 +28,7 @@ use yew_event_source::{
     EventSourceService, EventSourceStatus, EventSourceTask,
 };
 
-use gmtool_common::{FileEntry, PortableOsString};
+use gmtool_common::{FileEntry, PortableOsString, ReadResponse};
 use navlist::CharacterSheetLinkList;
 use sheetlist::CharacterSheetList;
 use weakcomponentlink::WeakComponentLink;
@@ -192,8 +192,8 @@ impl Model {
                     return Msg::Ignore;
                 }
             };
-            let contents = match serde_cbor::from_slice(&bytes) {
-                Ok(contents) => contents,
+            let (path, contents) = match bincode::deserialize(&bytes) {
+                Ok(ReadResponse { path, contents }) => (path, contents),
                 Err(e) => {
                     error!("Body deserialize: {:?}", e);
                     return Msg::Ignore;
