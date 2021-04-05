@@ -35,6 +35,7 @@ use weakcomponentlink::WeakComponentLink;
 
 pub struct Model {
     agentaddr: Option<Url>,
+    curdir: PortableOsString,
     dir_path_element: NodeRef,
     entries_element: NodeRef,
     fetch_tasks: Vec<FetchTask>,
@@ -122,12 +123,12 @@ impl Model {
 
     fn request_chdir(
         &mut self,
-        path: &PortableOsString,
+        path: Option<&PortableOsString>,
     ) -> Result<(), anyhow::Error> {
         let req = self.build_request(
             Method::POST,
             "/chdir",
-            Ok(bincode::serialize(path)?),
+            Ok(bincode::serialize(path.unwrap_or(&self.curdir))?),
         )?;
         let clos = |response: Response<Result<Vec<u8>, anyhow::Error>>| {
             let bytes = match response.into_body() {
@@ -325,8 +326,10 @@ impl Component for Model {
     fn create(_: Self::Properties, link: ComponentLink<Self>) -> Self {
         let (agentaddr, secret) = parse_params();
 
+        let curdir = PortableOsString::from(".");
         let mut model = Model {
             agentaddr,
+            curdir,
             dir_path_element: NodeRef::default(),
             entries_element: NodeRef::default(),
             fetch_tasks: vec![],
@@ -363,8 +366,7 @@ impl Component for Model {
                     }
                 }
 
-                if let Err(e) = self.request_chdir(&PortableOsString::from("."))
-                {
+                if let Err(e) = self.request_chdir(None) {
                     error!("Request chdir failed {:?}", e);
                 }
 
@@ -373,7 +375,7 @@ impl Component for Model {
             Msg::DirectoryEntrySelected(entry) => {
                 match entry {
                     FileEntry::Directory(ref path) => {
-                        if let Err(e) = self.request_chdir(path) {
+                        if let Err(e) = self.request_chdir(Some(path)) {
                             error!("Request chdir failed {:?}", e);
                         };
                     }
@@ -395,7 +397,7 @@ impl Component for Model {
                     .unwrap()
                     .value()
                     .into();
-                if let Err(e) = self.request_chdir(&path) {
+                if let Err(e) = self.request_chdir(Some(&path)) {
                     error!("Request chdir failed {:?}", e);
                 };
                 false
@@ -412,6 +414,7 @@ impl Component for Model {
                     .cast::<HtmlInputElement>()
                     .expect("dir_path instantiated")
                     .set_value(&path.to_str_lossy());
+                self.curdir = path;
                 if let Err(e) = self.request_lsdir() {
                     error!("Request lsdir failed {:?}", e);
                 };
