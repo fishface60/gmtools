@@ -284,7 +284,7 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let cookie_options = Some(CookieOptions {
         cookie_name: "sid",
         cookie_value: None,
-        max_age: Some(60),
+        max_age: None,
         domain: None,
         path: None,
         secure: false,
