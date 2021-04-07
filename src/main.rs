@@ -1,10 +1,9 @@
 #![allow(clippy::single_component_path_imports, clippy::upper_case_acronyms)]
 
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{hash_map::Entry, HashMap, HashSet},
     convert::{Infallible, TryInto},
     error::Error,
-    ffi::OsString,
     io::Error as IOError,
     net::SocketAddr,
     path::PathBuf,
@@ -91,9 +90,10 @@ enum RouterMessage {
         shutdown_rx: Receiver<Void>,
     },
     FileChange {
-        path: OsString,
+        path: PathBuf,
     },
     AddWatch {
+        id: String,
         path: PathBuf,
     },
 }
@@ -102,6 +102,7 @@ async fn router_handler(
     mut watcher: RecommendedWatcher,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut connections: HashMap<String, Sender<_>> = HashMap::new();
+    let mut watches: HashMap<String, HashSet<PathBuf>> = HashMap::new();
     let mut shutdown_futures = stream::FuturesUnordered::new();
     let mut seen_any_sse = false;
     loop {
@@ -135,7 +136,7 @@ async fn router_handler(
                 shutdown_rx,
             } => {
                 // TODO: Reply with refusal if session SSE already open
-                if let Entry::Vacant(entry) = connections.entry(id.clone()) {
+                if let Entry::Vacant(entry) = connections.entry(id) {
                     entry.insert(event_tx);
                 }
 
@@ -143,8 +144,16 @@ async fn router_handler(
                 shutdown_futures.push(shutdown_rx.into_future());
             }
             RouterMessage::FileChange { path } => {
-                let path: PortableOsString = path.into();
-                for event_tx in connections.values() {
+                for (id, event_tx) in &connections {
+                    match watches.get(id) {
+                        Some(paths) => {
+                            if !paths.contains(&path) {
+                                continue;
+                            }
+                        }
+                        None => continue,
+                    }
+                    let path: PortableOsString = path.into();
                     // TODO: Find a way for stream shutdown to return event_rx
                     if let Err(e) = event_tx.unbounded_send(
                         warp::filters::sse::Event::default()
@@ -155,9 +164,14 @@ async fn router_handler(
                     }
                 }
             }
-            RouterMessage::AddWatch { path } => {
+            RouterMessage::AddWatch { id, path } => {
                 // TODO: What to do with error?
                 watcher.watch(&path, RecursiveMode::NonRecursive)?;
+                if let Entry::Vacant(entry) = watches.entry(id.clone()) {
+                    entry.insert(HashSet::new());
+                }
+                let paths = watches.get_mut(&id).expect("watch entry inserted");
+                paths.insert(path);
             }
         }
     }
@@ -270,9 +284,7 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     path.to_str().unwrap()
                 );
                 watcher_message_tx
-                    .unbounded_send(RouterMessage::FileChange {
-                        path: path.into(),
-                    })
+                    .unbounded_send(RouterMessage::FileChange { path })
                     .unwrap();
             }
         })?;
@@ -570,6 +582,7 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     let curdir = session
                         .get::<Option<PathBuf>>("curdir")
                         .unwrap_or_default();
+                    let id = session.id().to_string();
 
                     let path = if let Some(ref curdir) = curdir {
                         let mut dir = curdir.clone();
@@ -584,7 +597,7 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     };
 
                     message_tx
-                        .unbounded_send(RouterMessage::AddWatch { path })
+                        .unbounded_send(RouterMessage::AddWatch { id, path })
                         .unwrap();
                     Ok::<_, Rejection>((
                         warp::reply::with_status(vec![], StatusCode::OK),
