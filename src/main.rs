@@ -130,7 +130,7 @@ async fn router_handler(
                 continue;
             }
         };
-        eprintln!("Event msg {:?}", &msg);
+        log::debug!("Event msg {:?}", &msg);
         match msg {
             RouterMessage::NewConnection {
                 id,
@@ -175,7 +175,7 @@ async fn router_handler(
                             .event(String::from("file_change"))
                             .json_data(&path),
                     ) {
-                        eprintln!("Closed connection exists in map: {:?}", e);
+                        log::error!("Closed connection exists in map: {:?}", e);
                     }
                 }
             }
@@ -231,17 +231,17 @@ async fn handle_rejection(
         match e {
             Rejections::MalformedBody(e) => {
                 let msg = format!("Deserialize failed: {:?}", e);
-                eprintln!("{}", msg);
+                log::error!("{}", msg);
                 (StatusCode::BAD_REQUEST, msg)
             }
             Rejections::SessionDataUnserializable(e) => {
                 let msg = format!("Session data serialize failed: {:?}", e);
-                eprintln!("{}", msg);
+                log::error!("{}", msg);
                 (StatusCode::INTERNAL_SERVER_ERROR, msg)
             }
             Rejections::BincodeReplyUnserializable(e) => {
                 let msg = format!("Reply serialize failed: {:?}", e);
-                eprintln!("{}", msg);
+                log::error!("{}", msg);
                 (StatusCode::INTERNAL_SERVER_ERROR, msg)
             }
             Rejections::NoCurdirRelativePath(path) => {
@@ -250,27 +250,27 @@ async fn handle_rejection(
                      current directory",
                     path
                 );
-                eprintln!("{}", msg);
+                log::error!("{}", msg);
                 (StatusCode::PRECONDITION_REQUIRED, msg)
             }
             Rejections::NoCurdirToLs => {
                 let msg = "No current directory to list".to_string();
-                eprintln!("{}", msg);
+                log::error!("{}", msg);
                 (StatusCode::PRECONDITION_REQUIRED, msg)
             }
             Rejections::LsDirError(e) => {
                 let msg = format!("lsdir failed: {:?}", e);
-                eprintln!("{}", msg);
+                log::error!("{}", msg);
                 (StatusCode::INTERNAL_SERVER_ERROR, msg)
             }
             Rejections::ReadError(path, e) => {
                 let msg = format!("Couldn't read {:?}: {:?}", path, e);
-                eprintln!("{}", msg);
+                log::error!("{}", msg);
                 (StatusCode::NOT_FOUND, msg)
             }
             Rejections::SheetParseError(path, e) => {
                 let msg = format!("Couldn't parse {:?}: {:?}", path, e);
-                eprintln!("{}", msg);
+                log::error!("{}", msg);
                 (StatusCode::NOT_FOUND, msg)
             }
             Rejections::Unauthorized => {
@@ -446,7 +446,7 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                 if curdir.is_none() {
                     match std::env::current_dir() {
                         Ok(dir) => curdir = Some(dir),
-                        Err(e) => eprintln!("Current dir missing {:?}", e),
+                        Err(e) => log::warn!("Current dir missing {:?}", e),
                     }
                 }
 
@@ -458,7 +458,7 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                         Err(e) => {
                             // Warn that canonicalize failed,
                             // but keep using curdir
-                            eprintln!(
+                            log::warn!(
                                 "Canonicalize for {:?} failed: {:?}",
                                 curdir, e
                             );
