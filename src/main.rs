@@ -29,8 +29,10 @@ use hyper::StatusCode;
 use rand::Rng;
 
 use notify::{
-    event::Event as NotifyEvent, RecommendedWatcher, RecursiveMode,
-    Result as NotifyResult, Watcher,
+    event::{
+        CreateKind, Event as NotifyEvent, EventKind, ModifyKind, RenameMode,
+    },
+    RecommendedWatcher, RecursiveMode, Result as NotifyResult, Watcher,
 };
 
 use url::{self, Url};
@@ -90,7 +92,7 @@ enum RouterMessage {
         shutdown_rx: Receiver<Void>,
     },
     FileChange {
-        path: PathBuf,
+        event: NotifyEvent,
     },
     AddWatch {
         id: String,
@@ -143,17 +145,30 @@ async fn router_handler(
                 seen_any_sse = true;
                 shutdown_futures.push(shutdown_rx.into_future());
             }
-            RouterMessage::FileChange { path } => {
+            RouterMessage::FileChange { event } => {
+                // If it's a Modify(Name(To)) event request a watch on the file
+                // if there's any connections interested in it.
+                // Only send path changes to connections which care.
+                let path = &event.paths[0];
+                let any_watching =
+                    watches.values().flatten().any(|p| p == path);
+                let is_rename = matches!(
+                    event.kind,
+                    EventKind::Modify(ModifyKind::Name(RenameMode::To))
+                );
+                if any_watching && is_rename {
+                    watcher.watch(path, RecursiveMode::NonRecursive)?;
+                }
                 for (id, event_tx) in &connections {
                     match watches.get(id) {
                         Some(paths) => {
-                            if !paths.contains(&path) {
+                            if !paths.contains(path) {
                                 continue;
                             }
                         }
                         None => continue,
                     }
-                    let path: PortableOsString = path.into();
+                    let path: PortableOsString = path.clone().into();
                     // TODO: Find a way for stream shutdown to return event_rx
                     if let Err(e) = event_tx.unbounded_send(
                         warp::filters::sse::Event::default()
@@ -166,6 +181,10 @@ async fn router_handler(
             }
             RouterMessage::AddWatch { id, path } => {
                 // TODO: What to do with error?
+                watcher.watch(
+                    path.parent().expect("has parent"),
+                    RecursiveMode::NonRecursive,
+                )?;
                 watcher.watch(&path, RecursiveMode::NonRecursive)?;
                 if let Entry::Vacant(entry) = watches.entry(id.clone()) {
                     entry.insert(HashSet::new());
@@ -277,14 +296,17 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         Watcher::new_immediate(move |res: NotifyResult<NotifyEvent>| {
             // TODO: How can we do error handling
             // when this callback doesn't have a Result return type?
+            log::debug!("Event: {:?}", &res);
             let event = res.unwrap();
-            for path in event.paths {
-                eprintln!(
-                    "Got notify event on path: {}",
-                    path.to_str().unwrap()
-                );
+            let send_event = matches!(
+                event.kind,
+                EventKind::Modify(ModifyKind::Name(RenameMode::To))
+                    | EventKind::Modify(ModifyKind::Data(_))
+                    | EventKind::Create(CreateKind::File)
+            );
+            if send_event {
                 watcher_message_tx
-                    .unbounded_send(RouterMessage::FileChange { path })
+                    .unbounded_send(RouterMessage::FileChange { event })
                     .unwrap();
             }
         })?;
