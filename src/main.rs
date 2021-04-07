@@ -2,7 +2,7 @@
 
 use std::{
     collections::{hash_map::Entry, HashMap},
-    convert::{Infallible, TryFrom, TryInto},
+    convert::{Infallible, TryInto},
     error::Error,
     ffi::OsString,
     io::Error as IOError,
@@ -21,11 +21,7 @@ use futures::{
 };
 use pin_project::pin_project;
 
-use async_std::{
-    path::PathBuf as AsyncPathBuf,
-    sync::{Arc, Mutex},
-    task,
-};
+use async_std::{path::PathBuf as AsyncPathBuf, task};
 
 use bincode;
 
@@ -97,9 +93,13 @@ enum RouterMessage {
     FileChange {
         path: OsString,
     },
+    AddWatch {
+        path: PathBuf,
+    },
 }
 async fn router_handler(
     mut message_rx: Receiver<RouterMessage>,
+    mut watcher: RecommendedWatcher,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
     let mut connections: HashMap<String, Sender<_>> = HashMap::new();
     let mut shutdown_futures = stream::FuturesUnordered::new();
@@ -155,6 +155,10 @@ async fn router_handler(
                     }
                 }
             }
+            RouterMessage::AddWatch { path } => {
+                // TODO: What to do with error?
+                watcher.watch(&path, RecursiveMode::NonRecursive)?;
+            }
         }
     }
     drop(connections);
@@ -171,7 +175,6 @@ enum Rejections {
     LsDirError(std::io::Error),
     ReadError(PathBuf, std::io::Error),
     SheetParseError(PathBuf, serde_json::Error),
-    WatchError(PathBuf, notify::Error),
     Unauthorized,
 }
 
@@ -237,11 +240,6 @@ async fn handle_rejection(
                 eprintln!("{}", msg);
                 (StatusCode::NOT_FOUND, msg)
             }
-            Rejections::WatchError(path, e) => {
-                let msg = format!("Watch {:?} failed: {:?}", path, e);
-                eprintln!("{}", msg);
-                (StatusCode::INTERNAL_SERVER_ERROR, msg)
-            }
             Rejections::Unauthorized => {
                 (StatusCode::UNAUTHORIZED, "Unauthorized".to_string())
             }
@@ -257,7 +255,6 @@ async fn handle_rejection(
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
     let (message_tx, message_rx) = unbounded_channel::<RouterMessage>();
-    let router = router_handler(message_rx);
 
     // Spawn file watcher thread
     let watcher_message_tx = message_tx.clone();
@@ -278,7 +275,8 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                     .unwrap();
             }
         })?;
-    let watcher_ref = Arc::new(Mutex::new(watcher));
+
+    let router = router_handler(message_rx, watcher);
 
     let session_store = MemoryStore::new();
     let cookie_options = Some(CookieOptions {
@@ -336,12 +334,13 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .untuple_one()
         .and_then(warp_sessions::reply::with_session)
         .recover(handle_rejection);
+    let sse_message_tx = message_tx.clone();
     let get_sse = warp::path("sse")
         .and(warp::get())
         .and(with_session.clone())
         .and_then(authorize)
         .and_then(move |session_with_store: SessionWithStore<MemoryStore>| {
-            let message_tx = message_tx.clone();
+            let message_tx = sse_message_tx.clone();
             async move {
                 let (event_tx, event_rx) = unbounded_channel();
                 let (shutdown_tx, shutdown_rx) = unbounded_channel();
@@ -548,6 +547,7 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .untuple_one()
         .and_then(warp_sessions::reply::with_session)
         .recover(handle_rejection);
+    let watch_message_tx = message_tx;
     let post_watch = warp::path("watch")
         .and(warp::post())
         .and(with_session.clone())
@@ -556,7 +556,7 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .and_then(
             move |mut session_with_store: SessionWithStore<MemoryStore>,
                   body: hyper::body::Bytes| {
-                let watcher_ref = Arc::clone(&watcher_ref);
+                let message_tx = watch_message_tx.clone();
                 async move {
                     let path: PortableOsString = bincode::deserialize(&body)
                         .map_err(|e| {
@@ -582,19 +582,9 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                         ));
                     };
 
-                    watcher_ref
-                        .lock_arc()
-                        .await
-                        .watch(
-                            OsString::try_from(path.clone())
-                                .expect("Native os string"),
-                            RecursiveMode::NonRecursive,
-                        )
-                        .map_err(|e| {
-                            warp::reject::custom(Rejections::WatchError(
-                                path, e,
-                            ))
-                        })?;
+                    message_tx
+                        .unbounded_send(RouterMessage::AddWatch { path })
+                        .unwrap();
                     Ok::<_, Rejection>((
                         warp::reply::with_status(vec![], StatusCode::OK),
                         session_with_store,
