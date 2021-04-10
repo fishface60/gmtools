@@ -17,3 +17,11 @@ pub enum FileKind {
     #[serde(other)]
     Unknown,
 }
+
+pub fn to_json(file: &FileKind) -> Result<Vec<u8>, serde_json::Error> {
+    let mut contents: Vec<u8> = Vec::with_capacity(128);
+    let fmt = serde_json::ser::PrettyFormatter::with_indent(b"\t");
+    let mut ser = serde_json::Serializer::with_formatter(&mut contents, fmt);
+    file.serialize(&mut ser)?;
+    Ok(contents)
+}
