@@ -5,7 +5,7 @@ mod navlist;
 mod sheetlist;
 mod weakcomponentlink;
 
-use std::convert::TryInto;
+use std::{collections::BTreeMap, convert::TryInto};
 
 use anyhow::anyhow;
 use log::{debug, error, info, warn};
@@ -522,7 +522,7 @@ impl Component for Model {
                   <ul id="nav-sheets">
                   <CharacterSheetLinkList
                    link_prefix="sheets-"
-                   names=std::collections::BTreeMap::new()
+                   names=BTreeMap::new()
                    weak_link=&self.links_list_element
                   />
                   </ul>
@@ -533,7 +533,7 @@ impl Component for Model {
             <div id="sheets">
               <h1>{"Character Sheets"}</h1>
               <CharacterSheetList
-               character_sheets=std::collections::BTreeMap::new()
+               character_sheets=BTreeMap::new()
                link_prefix="sheets-"
                weak_link=&self.sheets_list_element/>
             </div>
