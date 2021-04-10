@@ -7,9 +7,15 @@ pub struct WeakComponentLink<COMP: Component>(
     Rc<RefCell<Option<ComponentLink<COMP>>>>,
 );
 
+impl<COMP: Component> WeakComponentLink<COMP> {
+    pub fn new(link: ComponentLink<COMP>) -> Self {
+        Self(Rc::new(RefCell::new(Some(link))))
+    }
+}
+
 impl<COMP: Component> Default for WeakComponentLink<COMP> {
     fn default() -> Self {
-        WeakComponentLink(Rc::new(RefCell::new(None)))
+        Self(Rc::new(RefCell::new(None)))
     }
 }
 
@@ -23,7 +29,7 @@ impl<COMP: Component> Deref for WeakComponentLink<COMP> {
 
 impl<COMP: Component> Clone for WeakComponentLink<COMP> {
     fn clone(&self) -> Self {
-        WeakComponentLink(self.0.clone())
+        Self(self.0.clone())
     }
 }
 
