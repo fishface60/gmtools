@@ -10,7 +10,7 @@ use yew::{
 
 use gmtool_common::PortableOsString;
 
-use crate::weakcomponentlink::WeakComponentLink;
+use crate::{weakcomponentlink::WeakComponentLink, Model};
 
 #[derive(Clone, PartialEq, Properties)]
 pub struct Props {
@@ -19,6 +19,8 @@ pub struct Props {
         BTreeMap<PortableOsString, gcs::character::CharacterV1>,
     #[prop_or_default]
     pub link_prefix: String,
+    #[prop_or_default]
+    pub model_link: WeakComponentLink<Model>,
     #[prop_or_default]
     pub weak_link: WeakComponentLink<CharacterSheetList>,
 }
@@ -73,6 +75,11 @@ impl Component for CharacterSheetList {
                     .get_mut(&path)
                     .expect("Sheet not deleted between click and msg");
                 sheet.set_hit_points(hp);
+                let link = self.props.model_link.borrow().clone().unwrap();
+                link.send_message(<Model as Component>::Message::SheetSubmit(
+                    path,
+                    gcs::Character::V1(sheet.clone()),
+                ));
 
                 false
             }

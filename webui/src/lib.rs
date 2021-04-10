@@ -244,6 +244,7 @@ pub enum Msg {
     RequestSheetContentsResponse(PortableOsString, gcs::FileKind),
     RequestChDirResponse(PortableOsString),
     RequestLsDirResponse(Vec<FileEntry>),
+    SheetSubmit(PortableOsString, gcs::character::Character),
     Ignore,
 }
 
@@ -510,6 +511,7 @@ impl Component for Model {
                 );
                 false
             }
+            Msg::SheetSubmit(_path, _character) => false,
             Msg::Ignore => false,
         }
     }
@@ -541,6 +543,7 @@ impl Component for Model {
               <CharacterSheetList
                character_sheets=BTreeMap::new()
                link_prefix="sheets-"
+               model_link=&self.link
                weak_link=&self.sheets_list_element/>
             </div>
             <div id="file-browser">
