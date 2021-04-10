@@ -84,13 +84,58 @@ webui
 Future plans
 ============
 
-0.  Retry http-client for webui, using improved dependency resolution
-    and submitting patches to disable features in dependencies
-    that don't build on wasm.
-1.  Bridge to MapTool
-2.  GCS file watcher to offer to reload on change.
-3.  MapTool URI scheme to provide MapTool launch and quick-join URL.
-4.  Tools for automatic peer-to-peer connectivity with per-device domain name.
+*   Allow WebUI to change stats and save them.
+*   Handle FP in WebUI
+    *   Read FP from sheets
+    *   Modify state and request write on FP change
+*   Allow storing ER in third-party area
+    *   Calculate Energy Reserves from enabled named advantage levels
+    *   Render Energy Reserve widgets in WebUI
+    *   Modify state and request write on ER change
+*   Bridge to MapTool
+    *   Implement any missing parts of https://crates.io/crates/hessian_rs
+    *   Test client that takes credentials from command-line
+        and logs messages from server.
+    *   Implement minimum logic to parse messages to know when
+        token states have changed.
+    *   If token is owned by the bridge report its state.
+    *   Change client to have an HTTP interface.
+        *   Report state changes via SSE.
+        *   Accept requests with provided Name + Stats
+            and send messages to update all tokens with matching name
+            that are owned by the bridge.
+*   Interface for rolling
+    *   Calculate effective levels for attributes, skills and spells.
+    *   Add button that sends roll through MapTool bridge.
+*   GCS file watcher to offer to reload on change.
+    *   May re-check on-focus if easier.
+*   MapTool fix UPnP-IGD
+*   MapTool URI scheme to provide MapTool launch and quick-join URL.
+*   Interface for draining energy
+    *   Dialogue for picking from energy pools.
+*   Interface for casting spells
+    *   Count levels of Life-Force Burn perk
+    *   Integrate with using energy UI, HP spent above Life-Force burn modifier
+    *   Add number field for increasing effective skill by increasing energy.
+*   Per-source UI for FP and HP damage
+    *   Store an ordered sequence of damage by source
+    *   Render as vertical gradient bar chart.
+        1.  Initially filled, with colour dependant on energy type
+            (Red for HP, Green for FP, Bluish-purple for QP,
+            Blue for Energy Reserve (Magical),
+            Dark Red for Energy Reserve (Blood),
+            Reddish-purple for Energy Reserve (Psionic)).
+        2.  Damage replaces a region of the filled bar at the top.
+        3.  Newer damage is added above older damage,
+            it "grows down" and is healed LIFO.
+        4.  Damage not healable by generic healing is sorted above.
+        5.  Generic healing removes damage from the bottom first.
+        6.  Limited healing skips over damage it can't heal.
+        7.  FP extends below 0 to -1×FP, HP to -5×HP if not Unkillable,
+            to -10× if Unkillable.
+    *   Store "damage" value in third_party area and if thirdparty value differs
+        prompt for user to rationalise.
+*   Tools for automatic peer-to-peer connectivity with per-device domain name.
     1.  Client that reacts to current network connection state,
         uses UPnP-IGD/PCP connect to router and find external IP addresses,
         updates A record at https://dynv6.com/ to point to current address.
@@ -109,3 +154,12 @@ Future plans
     3.  MapTool client makes SRV lookups.
     4.  Special-purpose VPN endpoint that implements UPnP-IGD/NAT-PMP/PCP
         so that in a less permissible network you can get a reachable address.
+*   Use ReadableStream on fetch response instead of SSE for watch notification.
+*   Use ServiceWorker to sit in-between fetches and provide an offline mode.
+*   Move watch logic into a SharedWorker that broadcasts file changes
+    so app can work in multiple tabs.
+*   Turn into a Progressive Web App and use native fs access,
+    in preparation for future notification support,
+    and in the meantime can re-scan on focus change.
+*   Relay WebPush credentials via MapTool bridges
+    so GM server start sends push notification to players.
