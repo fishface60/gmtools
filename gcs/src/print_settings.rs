@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 fn default_number_up() -> u64 {
     1
 }
+fn is_default_number_up(number_up: &u64) -> bool {
+    *number_up == default_number_up()
+}
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct PrintSettings {
     // TODO: length units enum
@@ -21,7 +24,7 @@ pub struct PrintSettings {
     pub sides: String,
     #[serde(
         default = "default_number_up",
-        skip_serializing_if = "serde_skip::is_default"
+        skip_serializing_if = "is_default_number_up"
     )]
     pub number_up: u64,
     // TODO: Quality enum
