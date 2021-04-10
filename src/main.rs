@@ -460,7 +460,8 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
                             // but keep using curdir
                             log::warn!(
                                 "Canonicalize for {:?} failed: {:?}",
-                                curdir, e
+                                curdir,
+                                e
                             );
                             curdir
                         }
