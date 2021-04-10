@@ -28,7 +28,7 @@ use yew_event_source::{
     EventSourceService, EventSourceStatus, EventSourceTask,
 };
 
-use gmtool_common::{FileEntry, PortableOsString, ReadResponse};
+use gmtool_common::{FileEntry, PortableOsString, ReadResponse, WriteRequest};
 use navlist::CharacterSheetLinkList;
 use sheetlist::CharacterSheetList;
 use weakcomponentlink::WeakComponentLink;
@@ -230,6 +230,46 @@ impl Model {
             Msg::Ignore
         };
         let task = FetchService::fetch_binary(req, link.callback(clos))?;
+        self.fetch_tasks.push(task);
+        Ok(())
+    }
+
+    fn request_write(
+        &mut self,
+        path: PortableOsString,
+        contents: gcs::FileKind,
+    ) -> Result<(), anyhow::Error> {
+        let link = self.link.borrow().clone().unwrap();
+        let req_body = WriteRequest { path, contents };
+        let req = self.build_request(
+            Method::POST,
+            "/write",
+            Ok(bincode::serialize(&req_body)?),
+        )?;
+        let clos = move |response: Response<Result<Vec<u8>, anyhow::Error>>| {
+            let bytes = match response.into_body() {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    error!("Response into body: {:?}", e);
+                    return Msg::Ignore;
+                }
+            };
+            let path: PortableOsString = match bincode::deserialize(&bytes) {
+                Ok(path) => path,
+                Err(e) => {
+                    error!("Body deserialize: {:?}", e);
+                    return Msg::Ignore;
+                }
+            };
+            if path != req_body.path {
+                warn!(
+                    "Save requested path {:?} but resolved to {:?}",
+                    &path, &req_body.path
+                );
+            }
+            Msg::Ignore
+        };
+        let task = FetchService::fetch_binary(req, link.callback_once(clos))?;
         self.fetch_tasks.push(task);
         Ok(())
     }
@@ -511,7 +551,13 @@ impl Component for Model {
                 );
                 false
             }
-            Msg::SheetSubmit(_path, _character) => false,
+            Msg::SheetSubmit(path, character) => {
+                let contents = gcs::FileKind::Character(character);
+                if let Err(e) = self.request_write(path, contents) {
+                    error!("Request write failed {:?}", e);
+                };
+                false
+            }
             Msg::Ignore => false,
         }
     }

@@ -151,3 +151,10 @@ pub struct ReadResponse {
     #[serde(with = "as_cbor")]
     pub contents: gcs::FileKind,
 }
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct WriteRequest {
+    pub path: PortableOsString,
+    #[serde(with = "as_cbor")]
+    pub contents: gcs::FileKind,
+}
