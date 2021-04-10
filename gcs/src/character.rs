@@ -11,6 +11,7 @@ use uuid::Uuid;
 use crate::advantage::AdvantageKind;
 use crate::date_format;
 use crate::print_settings::PrintSettings;
+use crate::settings::Settings;
 use crate::version_serdes::{
     VersionDeserializeWrapper, VersionSerializeWrapper,
 };
@@ -66,8 +67,7 @@ pub struct CharacterV1 {
     #[serde(default, skip_serializing_if = "serde_skip::is_default")]
     pub based_on_hash: Option<String>,
 
-    // TODO: properly encode settings
-    pub settings: HashMap<String, SerdeValue>,
+    pub settings: Settings,
 
     #[serde(with = "date_format")]
     pub created_date: NaiveDateTime,
