@@ -29,5 +29,6 @@ pub struct PrintSettings {
     pub number_up: u64,
     // TODO: Quality enum
     pub quality: String,
+    #[serde(default, skip_serializing_if = "serde_skip::is_default")]
     pub resolution: Option<String>,
 }
