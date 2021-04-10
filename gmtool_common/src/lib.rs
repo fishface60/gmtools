@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use gcs;
 
 #[derive(
-    Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize,
+    Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
 )]
 pub enum PortableOsString {
     Undifferentiated(String),
