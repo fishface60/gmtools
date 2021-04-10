@@ -212,6 +212,10 @@ impl CharacterV1 {
         let cur = (max as i64) - (self.hp_damage as i64);
         (cur, max)
     }
+    pub fn set_hit_points(&mut self, new: i64) {
+        let (_, max) = self.get_hit_points();
+        self.hp_damage = (max as i64 - new) as u64;
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
