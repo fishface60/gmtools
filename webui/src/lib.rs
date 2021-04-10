@@ -39,7 +39,7 @@ pub struct Model {
     dir_path_element: NodeRef,
     entries_element: NodeRef,
     fetch_tasks: Vec<FetchTask>,
-    link: ComponentLink<Self>,
+    link: WeakComponentLink<Self>,
     links_list_element: WeakComponentLink<CharacterSheetLinkList>,
     sheets_list_element: WeakComponentLink<CharacterSheetList>,
     sse_con: Option<EventSourceTask>,
@@ -69,6 +69,7 @@ impl Model {
     }
 
     fn request_auth(&mut self) -> Result<(), anyhow::Error> {
+        let link = self.link.borrow().clone().unwrap();
         let secret = self
             .secret
             .ok_or_else(|| anyhow!("Can't auth without secret"))?;
@@ -84,12 +85,13 @@ impl Model {
             }
             Msg::Authenticated
         };
-        let task = FetchService::fetch_binary(req, self.link.callback(clos))?;
+        let task = FetchService::fetch_binary(req, link.callback(clos))?;
         self.fetch_tasks.push(task);
         Ok(())
     }
 
     fn connect_sse(&mut self) -> Result<(), anyhow::Error> {
+        let link = self.link.borrow().clone().unwrap();
         let mut uri = match self.agentaddr {
             Some(ref agentaddr) => agentaddr.clone(),
             None => anyhow::bail!("No agent address"),
@@ -99,7 +101,7 @@ impl Model {
         let mut sse_con = EventSourceService::new()
             .connect(
                 uri.as_str(),
-                self.link.callback(|status| {
+                link.callback(|status| {
                     if status == EventSourceStatus::Error {
                         error!("event source error");
                     }
@@ -109,7 +111,7 @@ impl Model {
             .map_err(|s| anyhow!("SSE Connect failed: {}", s))?;
         sse_con.add_event_listener(
             "file_change",
-            self.link.callback(|Json(data)| match data {
+            link.callback(|Json(data)| match data {
                 Ok(path) => Msg::FileChange(path),
                 Err(e) => {
                     error!("{:?}", e);
@@ -125,6 +127,7 @@ impl Model {
         &mut self,
         path: Option<&PortableOsString>,
     ) -> Result<(), anyhow::Error> {
+        let link = self.link.borrow().clone().unwrap();
         let req = self.build_request(
             Method::POST,
             "/chdir",
@@ -147,12 +150,13 @@ impl Model {
             };
             Msg::RequestChDirResponse(contents)
         };
-        let task = FetchService::fetch_binary(req, self.link.callback(clos))?;
+        let task = FetchService::fetch_binary(req, link.callback(clos))?;
         self.fetch_tasks.push(task);
         Ok(())
     }
 
     fn request_lsdir(&mut self) -> Result<(), anyhow::Error> {
+        let link = self.link.borrow().clone().unwrap();
         let req = self.build_request(Method::GET, "/lsdir", Nothing)?;
         let clos = |response: Response<Result<Vec<u8>, anyhow::Error>>| {
             let bytes = match response.into_body() {
@@ -171,7 +175,7 @@ impl Model {
             };
             Msg::RequestLsDirResponse(contents)
         };
-        let task = FetchService::fetch_binary(req, self.link.callback(clos))?;
+        let task = FetchService::fetch_binary(req, link.callback(clos))?;
         self.fetch_tasks.push(task);
         Ok(())
     }
@@ -180,6 +184,7 @@ impl Model {
         &mut self,
         path: PortableOsString,
     ) -> Result<(), anyhow::Error> {
+        let link = self.link.borrow().clone().unwrap();
         let req = self.build_request(
             Method::POST,
             "/read",
@@ -202,8 +207,7 @@ impl Model {
             };
             Msg::RequestSheetContentsResponse(path, contents)
         };
-        let task =
-            FetchService::fetch_binary(req, self.link.callback_once(clos))?;
+        let task = FetchService::fetch_binary(req, link.callback_once(clos))?;
         self.fetch_tasks.push(task);
         Ok(())
     }
@@ -212,6 +216,7 @@ impl Model {
         &mut self,
         path: &PortableOsString,
     ) -> Result<(), anyhow::Error> {
+        let link = self.link.borrow().clone().unwrap();
         let req = self.build_request(
             Method::POST,
             "/watch",
@@ -224,7 +229,7 @@ impl Model {
             }
             Msg::Ignore
         };
-        let task = FetchService::fetch_binary(req, self.link.callback(clos))?;
+        let task = FetchService::fetch_binary(req, link.callback(clos))?;
         self.fetch_tasks.push(task);
         Ok(())
     }
@@ -333,7 +338,7 @@ impl Component for Model {
             dir_path_element: NodeRef::default(),
             entries_element: NodeRef::default(),
             fetch_tasks: vec![],
-            link,
+            link: WeakComponentLink::new(link),
             links_list_element:
                 WeakComponentLink::<CharacterSheetLinkList>::default(),
             secret,
@@ -510,6 +515,7 @@ impl Component for Model {
     }
 
     fn view(&self) -> Html {
+        let link = self.link.borrow().clone().unwrap();
         html! {
           <>
             <div id="nav">
@@ -544,7 +550,7 @@ impl Component for Model {
                   <th>{"Directory"}</th>
                   <td>
                     <form
-                     onsubmit=self.link.callback(|evt: FocusEvent| {
+                     onsubmit=link.callback(|evt: FocusEvent| {
                        evt.prevent_default();
                        Msg::DirectoryPathSubmitted
                      })>
@@ -557,7 +563,7 @@ impl Component for Model {
                   <td>
                     <select ref=self.entries_element.clone()  multiple=true
                      style="width: 100%;"
-                     onchange=self.link.callback(|evt: ChangeData| match evt {
+                     onchange=link.callback(|evt: ChangeData| match evt {
                        ChangeData::Select(ref select_element) => {
                            let entry = serde_json::from_str(
                                &select_element.value()).expect("select value");
