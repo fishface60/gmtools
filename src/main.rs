@@ -44,7 +44,7 @@ use warp_sessions::{
 
 use webbrowser;
 
-use gmtool_common::{FileEntry, PortableOsString, ReadResponse};
+use gmtool_common::{FileEntry, PortableOsString, ReadResponse, WriteRequest};
 
 const WEBUI: &str = include_str!(env!("WEBUI_HTML_PATH"));
 
@@ -208,6 +208,8 @@ enum Rejections {
     LsDirError(std::io::Error),
     ReadError(PathBuf, std::io::Error),
     SheetParseError(PathBuf, serde_json::Error),
+    SheetSerializeError(serde_json::Error),
+    WriteError(PathBuf, std::io::Error),
     Unauthorized,
 }
 
@@ -272,6 +274,16 @@ async fn handle_rejection(
                 let msg = format!("Couldn't parse {:?}: {:?}", path, e);
                 log::error!("{}", msg);
                 (StatusCode::NOT_FOUND, msg)
+            }
+            Rejections::SheetSerializeError(e) => {
+                let msg = format!("Couldn't serialise sheet: {:?}", e);
+                log::error!("{}", msg);
+                (StatusCode::BAD_REQUEST, msg)
+            }
+            Rejections::WriteError(path, e) => {
+                let msg = format!("Couldn't write {:?}: {:?}", path, e);
+                log::error!("{}", msg);
+                (StatusCode::INTERNAL_SERVER_ERROR, msg)
             }
             Rejections::Unauthorized => {
                 (StatusCode::UNAUTHORIZED, "Unauthorized".to_string())
@@ -632,6 +644,62 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .untuple_one()
         .and_then(warp_sessions::reply::with_session)
         .recover(handle_rejection);
+    let post_write = warp::path("write")
+        .and(warp::post())
+        .and(with_session.clone())
+        .and_then(authorize)
+        .and(warp::body::bytes())
+        .and_then(
+            move |mut session_with_store: SessionWithStore<MemoryStore>,
+                  body: hyper::body::Bytes| async move {
+                let write_req: WriteRequest = bincode::deserialize(&body)
+                    .map_err(|e| {
+                        warp::reject::custom(Rejections::MalformedBody(e))
+                    })?;
+                let path: PathBuf =
+                    write_req.path.try_into().expect("native OsString");
+
+                let session = &mut session_with_store.session;
+                let curdir = session
+                    .get::<Option<PathBuf>>("curdir")
+                    .unwrap_or_default();
+
+                let path = if let Some(ref curdir) = curdir {
+                    let mut dir = curdir.clone();
+                    dir.push(path);
+                    dir
+                } else if path.is_absolute() {
+                    path
+                } else {
+                    return Err(Rejection::from(
+                        Rejections::NoCurdirRelativePath(path),
+                    ));
+                };
+
+                let contents =
+                    gcs::to_json(&write_req.contents).map_err(|e| {
+                        warp::reject::custom(Rejections::SheetSerializeError(e))
+                    })?;
+                tokio::fs::write(&path, &contents).await.map_err(|e| {
+                    warp::reject::custom(Rejections::WriteError(
+                        path.clone(),
+                        e,
+                    ))
+                })?;
+
+                let bytes = bincode::serialize(&PortableOsString::from(path))
+                    .map_err(|e| {
+                    warp::reject::custom(
+                        Rejections::BincodeReplyUnserializable(e),
+                    )
+                })?;
+                let reply = warp::reply::with_status(bytes, StatusCode::OK);
+                Ok::<_, Rejection>((reply, session_with_store))
+            },
+        )
+        .untuple_one()
+        .and_then(warp_sessions::reply::with_session)
+        .recover(handle_rejection);
 
     let routes = get_webui
         .or(post_auth)
@@ -639,7 +707,8 @@ pub async fn main() -> Result<(), Box<dyn Error + Send + Sync>> {
         .or(post_chdir)
         .or(get_lsdir)
         .or(post_read)
-        .or(post_watch);
+        .or(post_watch)
+        .or(post_write);
 
     let http_addr = SocketAddr::from(([127, 0, 0, 1], 0));
     let (http_addr, server) =
