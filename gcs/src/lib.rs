@@ -3,6 +3,7 @@ pub mod character;
 pub mod control_roll;
 pub mod date_format;
 pub mod feature;
+pub mod list_row;
 pub mod print_settings;
 pub mod settings;
 pub mod version_serdes;

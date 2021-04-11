@@ -6,10 +6,10 @@ use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
 };
 use serde_value::{Value as SerdeValue, ValueDeserializer};
-use uuid::Uuid;
 
 use crate::advantage::AdvantageKind;
 use crate::date_format;
+use crate::list_row::RowIdFragment;
 use crate::print_settings::PrintSettings;
 use crate::settings::Settings;
 use crate::version_serdes::{
@@ -59,15 +59,8 @@ pub struct CharacterProfile {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct CharacterV1 {
-    pub id: Uuid,
-
-    #[serde(default, skip_serializing_if = "serde_skip::is_default")]
-    pub based_on_id: Option<Uuid>,
-    // Is a base64-encoded SHA3-256 hash of the object
-    // as stored as unindented compact JSON,
-    // omitting the print settings and third party data
-    #[serde(default, skip_serializing_if = "serde_skip::is_default")]
-    pub based_on_hash: Option<String>,
+    #[serde(flatten)]
+    pub id: RowIdFragment,
 
     pub settings: Settings,
 
@@ -121,9 +114,9 @@ pub struct CharacterV1 {
     #[serde(default, skip_serializing_if = "serde_skip::is_default")]
     pub advantages: Vec<AdvantageKind>,
 
+    // TODO: Omit print settings and third_party for hashing
     #[serde(default, skip_serializing_if = "serde_skip::is_default")]
     pub print_settings: Option<PrintSettings>,
-
     #[serde(default, skip_serializing_if = "serde_skip::is_default")]
     pub third_party: HashMap<String, SerdeValue>,
 

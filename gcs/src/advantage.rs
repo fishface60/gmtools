@@ -5,10 +5,10 @@ use serde::{
     Deserialize, Deserializer, Serialize, Serializer,
 };
 use serde_value::ValueDeserializer;
-use uuid::Uuid;
 
 use crate::control_roll::{ControlRoll, ControlRollAdjust};
 use crate::feature::Feature;
+use crate::list_row::RowIdFragment;
 use crate::version_serdes::{
     VersionDeserializeWrapper, VersionSerializeWrapper,
 };
@@ -16,15 +16,8 @@ use crate::weapon::Weapon;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AdvantageV1 {
-    pub id: Uuid,
-
-    #[serde(default, skip_serializing_if = "serde_skip::is_default")]
-    pub based_on_id: Option<Uuid>,
-    // Is a base64-encoded SHA3-256 hash of the object
-    // as stored as unindented compact JSON,
-    // omitting the open state
-    #[serde(default, skip_serializing_if = "serde_skip::is_default")]
-    pub based_on_hash: Option<String>,
+    #[serde(flatten)]
+    pub id: RowIdFragment,
 
     #[serde(default, skip_serializing_if = "serde_skip::is_default")]
     pub round_down: bool,
@@ -132,15 +125,8 @@ impl Serialize for Advantage {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AdvantageContainerV1 {
-    pub id: Uuid,
-
-    #[serde(default, skip_serializing_if = "serde_skip::is_default")]
-    pub based_on_id: Option<Uuid>,
-    // Is a base64-encoded SHA3-256 hash of the object
-    // as stored as unindented compact JSON,
-    // omitting the open state
-    #[serde(default, skip_serializing_if = "serde_skip::is_default")]
-    pub based_on_hash: Option<String>,
+    #[serde(flatten)]
+    pub id: RowIdFragment,
 
     #[serde(default, skip_serializing_if = "serde_skip::is_default")]
     pub disabled: bool,
