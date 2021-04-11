@@ -12,6 +12,7 @@ use crate::feature::Feature;
 use crate::version_serdes::{
     VersionDeserializeWrapper, VersionSerializeWrapper,
 };
+use crate::weapon::Weapon;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AdvantageV1 {
@@ -53,7 +54,8 @@ pub struct AdvantageV1 {
     #[serde(default, skip_serializing_if = "serde_skip::is_default")]
     pub points_per_level: i64,
 
-    // TODO: Weapons
+    #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+    pub weapons: Vec<Weapon>,
     #[serde(
         default,
         rename = "cr",
