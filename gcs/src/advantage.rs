@@ -6,6 +6,7 @@ use serde::{
 };
 use serde_value::ValueDeserializer;
 
+use crate::advantage_modifier::AdvantageModifierKind;
 use crate::control_roll::{ControlRoll, ControlRollAdjust};
 use crate::feature::Feature;
 use crate::list_row::RowIdFragment;
@@ -62,7 +63,8 @@ pub struct AdvantageV1 {
     )]
     pub control_roll_adjust: ControlRollAdjust,
 
-    // TODO: Modifiers
+    #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+    pub modifiers: Vec<AdvantageModifierKind>,
     #[serde(
         default,
         rename = "userdesc",

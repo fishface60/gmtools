@@ -1,4 +1,5 @@
 pub mod advantage;
+pub mod advantage_modifier;
 pub mod character;
 pub mod control_roll;
 pub mod date_format;
