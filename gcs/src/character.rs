@@ -27,6 +27,8 @@ pub struct CharacterProfile {
     #[serde(default, skip_serializing_if = "serde_skip::is_default")]
     pub age: String,
     #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+    pub birthday: String,
+    #[serde(default, skip_serializing_if = "serde_skip::is_default")]
     pub eyes: String,
     #[serde(default, skip_serializing_if = "serde_skip::is_default")]
     pub hair: String,
