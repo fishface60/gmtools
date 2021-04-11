@@ -1,3 +1,5 @@
+#![allow(clippy::upper_case_acronyms)]
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -22,7 +24,7 @@ fn default_armor_divisor() -> f64 {
     1.0
 }
 fn is_default_armor_divisor(armor_divisor: &f64) -> bool {
-    *armor_divisor == default_armor_divisor()
+    (*armor_divisor - default_armor_divisor()).abs() < f64::EPSILON
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

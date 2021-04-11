@@ -127,6 +127,7 @@ pub struct CharacterV1 {
 impl CharacterV1 {
     pub fn get_hit_points(&self) -> (i64, u64) {
         use crate::advantage::*;
+        use crate::attribute_bonus::*;
         use crate::feature::*;
         fn get_advantage_bonuses(advantage: &AdvantageKind) -> (i64, i64) {
             match advantage {

@@ -1,334 +1,237 @@
 #![allow(clippy::upper_case_acronyms)]
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_value::{Value as SerdeValue, ValueDeserializer};
+use serde::{Deserialize, Serialize};
+
+use crate::attribute_bonus::AttributeBonus;
+use crate::bonus::LeveledIntegerAmount;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct LeveledIntegerAmount {
-    pub amount: i64,
-    #[serde(default, skip_serializing_if = "serde_skip::is_default")]
-    pub per_level: bool,
+#[serde(rename_all = "snake_case", tag = "compare")]
+pub enum StringCriteria {
+    Any,
+    Is {
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        qualifier: String,
+    },
+    IsNot {
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        qualifier: String,
+    },
+    Contains {
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        qualifier: String,
+    },
+    DoesNotContain {
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        qualifier: String,
+    },
+    StartsWith {
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        qualifier: String,
+    },
+    DoesNotStartWith {
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        qualifier: String,
+    },
+    EndsWith {
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        qualifier: String,
+    },
+    DoesNotEndWith {
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        qualifier: String,
+    },
 }
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct LeveledDoubleAmount {
-    pub amount: f64,
-    #[serde(default, skip_serializing_if = "serde_skip::is_default")]
-    pub per_level: bool,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum STLimitation {
-    None,
-    LiftingOnly,
-    StrikingOnly,
-}
-impl Default for STLimitation {
+impl Default for StringCriteria {
     fn default() -> Self {
-        Self::None
+        Self::Any
     }
 }
-impl Default for &STLimitation {
-    fn default() -> Self {
-        &STLimitation::None
-    }
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "compare")]
+pub enum IntegerCriteria {
+    Is {
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        qualifier: i64,
+    },
+    AtLeast {
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        qualifier: i64,
+    },
+    AtMost {
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        qualifier: i64,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct StrengthAmount {
+pub struct DRBonus {
     #[serde(flatten)]
     pub amount: LeveledIntegerAmount,
+    // TODO: Location enum?
+    pub location: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ReactionBonus {
+    #[serde(flatten)]
+    pub amount: LeveledIntegerAmount,
+    pub situation: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ConditionalModifier {
+    #[serde(flatten)]
+    pub amount: LeveledIntegerAmount,
+    pub situation: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "selection_type")]
+pub enum SkillSelectionType {
+    ThisWeapon,
+    WeaponsWithName {
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        name: StringCriteria,
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        specialization: StringCriteria,
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        category: StringCriteria,
+    },
+    SkillsWithName {
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        name: StringCriteria,
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        specialization: StringCriteria,
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        category: StringCriteria,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct SkillLevelBonus {
+    #[serde(flatten)]
+    pub amount: LeveledIntegerAmount,
+    #[serde(flatten)]
+    pub selection_type: SkillSelectionType,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct SkillPointBonus {
+    #[serde(flatten)]
+    pub amount: LeveledIntegerAmount,
+    #[serde(flatten)]
+    pub selection_type: SkillSelectionType,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "match")]
+pub enum SpellSelectionType {
+    AllColleges,
+    CollegeName {
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        name: StringCriteria,
+    },
+    PowerSourceName {
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        name: StringCriteria,
+    },
+    SpellName {
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        name: StringCriteria,
+    },
+}
+impl Default for SpellSelectionType {
+    fn default() -> Self {
+        Self::AllColleges
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct SpellLevelBonus {
+    #[serde(flatten)]
+    pub amount: LeveledIntegerAmount,
+    #[serde(flatten)]
+    pub selection_type: SpellSelectionType,
     #[serde(default, skip_serializing_if = "serde_skip::is_default")]
-    pub limit: STLimitation,
+    pub category: StringCriteria,
 }
-#[derive(Clone, Debug, PartialEq)]
-pub enum AttributeBonus {
-    Strength(StrengthAmount),
-    Dexterity(LeveledIntegerAmount),
-    Intelligence(LeveledIntegerAmount),
-    Health(LeveledIntegerAmount),
-    Will(LeveledIntegerAmount),
-    FrightCheck(LeveledIntegerAmount),
-    Perception(LeveledIntegerAmount),
-    Vision(LeveledIntegerAmount),
-    Hearing(LeveledIntegerAmount),
-    TasteSmell(LeveledIntegerAmount),
-    Touch(LeveledIntegerAmount),
-    Dodge(LeveledIntegerAmount),
-    Parry(LeveledIntegerAmount),
-    Block(LeveledIntegerAmount),
-    Speed(LeveledDoubleAmount),
-    Move(LeveledIntegerAmount),
-    FatiguePoints(LeveledIntegerAmount),
-    HitPoints(LeveledIntegerAmount),
-    SizeModifier(LeveledIntegerAmount),
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct SpellPointBonus {
+    #[serde(flatten)]
+    pub amount: LeveledIntegerAmount,
+    #[serde(flatten)]
+    pub selection_type: SpellSelectionType,
+    #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+    pub category: StringCriteria,
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum AttributeTag {
-    #[serde(rename = "st")]
-    Strength,
-    #[serde(rename = "dx")]
-    Dexterity,
-    #[serde(rename = "iq")]
-    Intelligence,
-    #[serde(rename = "ht")]
-    Health,
-    Will,
-    FrightCheck,
-    Perception,
-    Vision,
-    Hearing,
-    TasteSmell,
-    Touch,
-    Dodge,
-    Parry,
-    Block,
-    Speed,
-    Move,
-    #[serde(rename = "fp")]
-    FatiguePoints,
-    #[serde(rename = "hp")]
-    HitPoints,
-    #[serde(rename = "sm")]
-    SizeModifier,
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "selection_type")]
+pub enum WeaponSelectionType {
+    ThisWeapon,
+    WeaponsWithName {
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        name: StringCriteria,
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        specialization: StringCriteria,
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        category: StringCriteria,
+    },
+    WeaponsWithRequiredSkill {
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        name: StringCriteria,
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        specialization: StringCriteria,
+        level: IntegerCriteria,
+        #[serde(default, skip_serializing_if = "serde_skip::is_default")]
+        category: StringCriteria,
+    },
 }
-impl<'de> Deserialize<'de> for AttributeBonus {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct AttributeWrapper {
-            attribute: AttributeTag,
-            #[serde(flatten)]
-            inner: SerdeValue,
-        }
-        let data = AttributeWrapper::deserialize(deserializer)?;
-        let value_deserializer = ValueDeserializer::<D::Error>::new(data.inner);
-        match data.attribute {
-            AttributeTag::Strength => {
-                StrengthAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::Strength)
-            }
-            AttributeTag::Dexterity => {
-                LeveledIntegerAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::Dexterity)
-            }
-            AttributeTag::Intelligence => {
-                LeveledIntegerAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::Intelligence)
-            }
-            AttributeTag::Health => {
-                LeveledIntegerAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::Health)
-            }
-            AttributeTag::Will => {
-                LeveledIntegerAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::Will)
-            }
-            AttributeTag::FrightCheck => {
-                LeveledIntegerAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::FrightCheck)
-            }
-            AttributeTag::Perception => {
-                LeveledIntegerAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::Perception)
-            }
-            AttributeTag::Vision => {
-                LeveledIntegerAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::Vision)
-            }
-            AttributeTag::Hearing => {
-                LeveledIntegerAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::Hearing)
-            }
-            AttributeTag::TasteSmell => {
-                LeveledIntegerAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::TasteSmell)
-            }
-            AttributeTag::Touch => {
-                LeveledIntegerAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::Touch)
-            }
-            AttributeTag::Dodge => {
-                LeveledIntegerAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::Dodge)
-            }
-            AttributeTag::Parry => {
-                LeveledIntegerAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::Parry)
-            }
-            AttributeTag::Block => {
-                LeveledIntegerAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::Block)
-            }
-            AttributeTag::Speed => {
-                LeveledDoubleAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::Speed)
-            }
-            AttributeTag::Move => {
-                LeveledIntegerAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::Move)
-            }
-            AttributeTag::FatiguePoints => {
-                LeveledIntegerAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::FatiguePoints)
-            }
-            AttributeTag::HitPoints => {
-                LeveledIntegerAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::HitPoints)
-            }
-            AttributeTag::SizeModifier => {
-                LeveledIntegerAmount::deserialize(value_deserializer)
-                    .map(AttributeBonus::SizeModifier)
-            }
-        }
-    }
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct WeaponDamageBonus {
+    #[serde(flatten)]
+    pub amount: LeveledIntegerAmount,
+    #[serde(flatten)]
+    pub selection_type: WeaponSelectionType,
 }
-impl Serialize for AttributeBonus {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        #[derive(Serialize)]
-        struct SerializeWrapper<A, L = ()>
-        where
-            L: Default + PartialEq,
-        {
-            #[serde(flatten)]
-            amount: A,
-            attribute: AttributeTag,
-            #[serde(default, skip_serializing_if = "serde_skip::is_default")]
-            limit: L,
-        }
-        match *self {
-            AttributeBonus::Strength(StrengthAmount {
-                ref amount,
-                ref limit,
-            }) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::Strength,
-                limit,
-            }
-            .serialize(serializer),
-            AttributeBonus::Dexterity(ref amount) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::Dexterity,
-                limit: (),
-            }
-            .serialize(serializer),
-            AttributeBonus::Intelligence(ref amount) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::Intelligence,
-                limit: (),
-            }
-            .serialize(serializer),
-            AttributeBonus::Health(ref amount) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::Health,
-                limit: (),
-            }
-            .serialize(serializer),
-            AttributeBonus::Will(ref amount) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::Will,
-                limit: (),
-            }
-            .serialize(serializer),
-            AttributeBonus::FrightCheck(ref amount) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::FrightCheck,
-                limit: (),
-            }
-            .serialize(serializer),
-            AttributeBonus::Perception(ref amount) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::Perception,
-                limit: (),
-            }
-            .serialize(serializer),
-            AttributeBonus::Vision(ref amount) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::Vision,
-                limit: (),
-            }
-            .serialize(serializer),
-            AttributeBonus::Hearing(ref amount) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::Hearing,
-                limit: (),
-            }
-            .serialize(serializer),
-            AttributeBonus::TasteSmell(ref amount) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::TasteSmell,
-                limit: (),
-            }
-            .serialize(serializer),
-            AttributeBonus::Touch(ref amount) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::Touch,
-                limit: (),
-            }
-            .serialize(serializer),
-            AttributeBonus::Dodge(ref amount) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::Dodge,
-                limit: (),
-            }
-            .serialize(serializer),
-            AttributeBonus::Parry(ref amount) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::Parry,
-                limit: (),
-            }
-            .serialize(serializer),
-            AttributeBonus::Block(ref amount) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::Block,
-                limit: (),
-            }
-            .serialize(serializer),
-            AttributeBonus::Speed(ref amount) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::Speed,
-                limit: (),
-            }
-            .serialize(serializer),
-            AttributeBonus::Move(ref amount) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::Move,
-                limit: (),
-            }
-            .serialize(serializer),
-            AttributeBonus::FatiguePoints(ref amount) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::FatiguePoints,
-                limit: (),
-            }
-            .serialize(serializer),
-            AttributeBonus::HitPoints(ref amount) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::HitPoints,
-                limit: (),
-            }
-            .serialize(serializer),
-            AttributeBonus::SizeModifier(ref amount) => SerializeWrapper {
-                amount,
-                attribute: AttributeTag::SizeModifier,
-                limit: (),
-            }
-            .serialize(serializer),
-        }
-    }
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase", tag = "attribute")]
+pub enum ReduceAttributeCost {
+    ST { percentage: i64 },
+    DX { percentage: i64 },
+    IQ { percentage: i64 },
+    HT { percentage: i64 },
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ReduceContainedWeight {
+    // TODO: Serialise as either a percentage or a weight value
+    pub reduction: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type")]
 pub enum Feature {
     AttributeBonus(AttributeBonus),
-    #[serde(other)]
-    Unknown,
+    #[serde(rename = "dr_bonus")]
+    DRBonus(DRBonus),
+    ReactionBonus(ReactionBonus),
+    ConditionalModifier(ConditionalModifier),
+    #[serde(rename = "skill_bonus")]
+    SkillLevelBonus(SkillLevelBonus),
+    SkillPointBonus(SkillPointBonus),
+    #[serde(rename = "spell_bonus")]
+    SpellLevelBonus(SpellLevelBonus),
+    SpellPointBonus(SpellPointBonus),
+    #[serde(rename = "weapon_bonus")]
+    WeaponDamageBonus(WeaponDamageBonus),
+    #[serde(rename = "cost_reduction")]
+    ReduceAttributeCost(ReduceAttributeCost),
+    #[serde(rename = "contained_weight_reduction")]
+    ReduceContainedWeight(ReduceContainedWeight),
 }
