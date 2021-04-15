@@ -104,6 +104,68 @@ Future plans
         *   Accept requests with provided Name + Stats
             and send messages to update all tokens with matching name
             that are owned by the bridge.
+*   Use Salsa to memoise stat calculations.
+    ```
+    let path: PathId = db.intern_path(path: PortableOsString);
+    db.set_deserialized_sheet(path, sheet: gcs::FileKind);
+    let max_hit_points = db.max_hit_points(path);
+    let hit_points = db.hit_points(path);
+    ...
+    fn hit_points(db, path) -> int {
+        let max_hit_points = db.max_hit_points(path);
+        let character = db.character(path);
+        max_hit_points - character.hp_damage
+    }
+    fn max_hit_points(db, path) -> int {
+        let character = db.character(path);
+        let mut hp = character.st + character.st_adj + character.hp_adj;
+        hp += character.advantages.map(|id| db.advantage_st_bonus(path, id)).fold(0, int::add);
+        hp += character.advantages.map(|id| db.advantage_hp_bonus(path, id)).fold(0, int::add);
+        hp += character.equipment.map(|id| db.equipment_st_bonus(path, id)).fold(0, int::add);
+        hp += character.equipment.map(|id| db.equipment_hp_bonus(path, id)).fold(0, int::add);
+        hp
+    }
+    fn advantage_st_bonus(db, path, id) -> {
+        let advantage = db.advantage(path, id);
+        match advantage {
+            Advantage { features, level, modifiers, .. } => {
+                let mut bonus = features.map(|feature| {
+                    let (amount, per_level) = feature.st_bonus();
+                    if per_level { amount * level } else { amount }).fold(0, int::add);
+                bonus += modifiers.map(|id| db.modifier_st_bonus(path, id)).fold(0, int::add);
+                bonus
+            }
+            AdvantageContainer { children, modifiers, .. } => {
+                // TODO: modifiers cascade down and may add features,
+                // do bonuses provided by these features apply to each advantage?
+                let mut bonus = children.map(|id| db.advantage_st_bonus(path, id)).fold(0, int::add);
+                bonus += modifiers.map(|id| db.modifier_st_bonus(path, id)).fold(0, int::add);
+                bonus
+            }
+        }
+    }
+    impl Feature {
+        fn st_bonus(&self) -> (int, bool) {
+            if let AttributeBonus(Strength({ amount: { amount, per_level }, limit: None })) = self {
+                (amount, per_level)
+            }
+        }
+    }
+    ...
+    fn advantage(db, path, id) -> AdvantageData {
+        let advantages = db.advantages(db, path);
+        advantages.get(id).unwrap()
+    }
+    fn advantages(db, path) -> Map<AdvantageId, AdvantageData> {
+        let (_, advantages, _, _, _) = db.models(path);
+        advantages
+    }
+    ...
+    fn models(db, path) -> (CharacterData, Map<AdvantageId, AdvantageData>, Map<SkillId, SkillData>, Map<SpellId, SpellData>, Map<EquipmentId, EquipmentData>) {
+        let sheet = db.deserialized_sheet(path);
+        // Traverse sheet, intern UUIDs to get IDs, make Model structs which replace child nodes with a Vec of their IDs, create and store those on-demand in the Maps then return them
+    }
+    ```
 *   Interface for rolling
     *   Calculate effective levels for attributes, skills and spells.
     *   Add button that sends roll through MapTool bridge.
