@@ -85,7 +85,7 @@ pub struct CharacterV1 {
         rename = "FP_adj",
         skip_serializing_if = "serde_skip::is_default"
     )]
-    pub fp_adj: u64,
+    pub fp_adj: i64,
     #[serde(default, skip_serializing_if = "serde_skip::is_default")]
     pub fp_damage: u64,
 
@@ -125,92 +125,31 @@ pub struct CharacterV1 {
 }
 
 impl CharacterV1 {
-    pub fn get_hit_points(&self) -> (i64, u64) {
-        use crate::advantage::*;
-        use crate::attribute_bonus::*;
-        use crate::feature::*;
-        fn get_advantage_bonuses(advantage: &AdvantageKind) -> (i64, i64) {
-            match advantage {
-                AdvantageKind::Advantage(Advantage::V1(ref advantage)) => {
-                    if advantage.disabled {
-                        return (0, 0);
-                    }
-                    let levels: f64 = match advantage.levels {
-                        None => 0f64,
-                        Some(ref s) => {
-                            if advantage.allow_half_levels {
-                                s.parse::<f64>().expect("real string")
-                            } else {
-                                s.parse::<i64>().expect("integer string") as f64
-                            }
-                        }
-                    };
-
-                    advantage
-                        .features
-                        .iter()
-                        .map(|f| match f {
-                            Feature::AttributeBonus(
-                                AttributeBonus::Strength(ref amount),
-                            ) => {
-                                match amount.limit {
-                                    STLimitation::None => (),
-                                    _ => return (0, 0),
-                                }
-                                (
-                                    ((amount.amount.amount as f64)
-                                        * if amount.amount.per_level {
-                                            levels
-                                        } else {
-                                            1f64
-                                        })
-                                        as i64,
-                                    0,
-                                )
-                            }
-                            Feature::AttributeBonus(
-                                AttributeBonus::HitPoints(ref amount),
-                            ) => (
-                                0,
-                                ((amount.amount as f64)
-                                    * if amount.per_level {
-                                        levels
-                                    } else {
-                                        1f64
-                                    }) as i64,
-                            ),
-                            _ => (0, 0),
-                        })
-                        .fold((0, 0), |acc, x| (acc.0 + x.0, acc.1 + x.1))
-                }
-                AdvantageKind::AdvantageContainer(AdvantageContainer::V1(
-                    ref advantage_container,
-                )) => {
-                    if advantage_container.disabled {
-                        return (0, 0);
-                    }
-                    advantage_container
-                        .children
-                        .iter()
-                        .map(get_advantage_bonuses)
-                        .fold((0, 0), |acc, x| (acc.0 + x.0, acc.1 + x.1))
-                }
-                _ => panic!("Don't know how to get bonuses from unknown kind"),
-            }
-        }
-        let (st_bonus, hp_bonus) = self
-            .advantages
-            .iter()
-            .map(get_advantage_bonuses)
-            .fold((0, 0), |acc, x| (acc.0 + x.0, acc.1 + x.1));
-        let max: u64 =
+    pub fn bonuses(&self) -> (i64, i64, i64, i64) {
+        self.advantages.iter().map(AdvantageKind::bonuses).fold(
+            (0, 0, 0, 0),
+            |(acc_st, acc_hp, acc_ht, acc_fp), (st, hp, ht, fp)| {
+                (acc_st + st, acc_hp + hp, acc_ht + ht, acc_fp + fp)
+            },
+        )
+    }
+    pub fn stats(&self) -> (i64, u64, i64, u64) {
+        let (st_bonus, hp_bonus, ht_bonus, fp_bonus) = self.bonuses();
+        let max_hp: u64 =
             ((self.strength as i64) + self.hp_adj + st_bonus + hp_bonus) as u64;
-        let cur = (max as i64) - (self.hp_damage as i64);
-        (cur, max)
+        let max_fp: u64 =
+            ((self.health as i64) + self.fp_adj + ht_bonus + fp_bonus) as u64;
+        let cur_hp: i64 = (max_hp as i64) - (self.hp_damage as i64);
+        let cur_fp: i64 = (max_fp as i64) - (self.fp_damage as i64);
+        (cur_hp, max_hp, cur_fp, max_fp)
     }
     pub fn set_hit_points(&mut self, new: i64) {
-        let (_, max) = self.get_hit_points();
+        let (_, max, _, _) = self.stats();
         self.hp_damage = (max as i64 - new) as u64;
+    }
+    pub fn set_fatigue_points(&mut self, new: i64) {
+        let (_, _, _, max) = self.stats();
+        self.fp_damage = (max as i64 - new) as u64;
     }
 }
 

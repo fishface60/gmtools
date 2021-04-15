@@ -82,6 +82,45 @@ enum AttributeTag {
     #[serde(rename = "sm")]
     SizeModifier,
 }
+impl AttributeBonus {
+    pub fn bonuses(&self, levels: f64) -> (i64, i64, i64, i64) {
+        match self {
+            AttributeBonus::Strength(ref amount) => {
+                match amount.limit {
+                    STLimitation::None => (),
+                    _ => return (0, 0, 0, 0),
+                }
+                let st = ((amount.amount.amount as f64)
+                    * if amount.amount.per_level {
+                        levels
+                    } else {
+                        1f64
+                    }) as i64;
+                (st, 0, 0, 0)
+            }
+            AttributeBonus::HitPoints(ref amount) => {
+                let hp = ((amount.amount as f64)
+                    * if amount.per_level { levels } else { 1f64 })
+                    as i64;
+                (0, hp, 0, 0)
+            }
+            AttributeBonus::Health(ref amount) => {
+                let ht = ((amount.amount as f64)
+                    * if amount.per_level { levels } else { 1f64 })
+                    as i64;
+                (0, 0, ht, 0)
+            }
+            AttributeBonus::FatiguePoints(ref amount) => {
+                let fp = ((amount.amount as f64)
+                    * if amount.per_level { levels } else { 1f64 })
+                    as i64;
+                (0, 0, 0, fp)
+            }
+            _ => (0, 0, 0, 0),
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for AttributeBonus {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

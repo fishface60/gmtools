@@ -87,10 +87,40 @@ pub struct AdvantageV1 {
     #[serde(flatten)]
     pub extra: HashMap<String, serde_value::Value>,
 }
+impl AdvantageV1 {
+    pub fn bonuses(&self) -> (i64, i64, i64, i64) {
+        if self.disabled {
+            return (0, 0, 0, 0);
+        }
+        let levels: f64 = match self.levels {
+            None => 0f64,
+            Some(ref s) => {
+                if self.allow_half_levels {
+                    s.parse::<f64>().expect("real string")
+                } else {
+                    s.parse::<i64>().expect("integer string") as f64
+                }
+            }
+        };
+        self.features.iter().map(|f| f.bonuses(levels)).fold(
+            (0, 0, 0, 0),
+            |(acc_st, acc_hp, acc_ht, acc_fp), (st, hp, ht, fp)| {
+                (acc_st + st, acc_hp + hp, acc_ht + ht, acc_fp + fp)
+            },
+        )
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Advantage {
     V1(AdvantageV1),
+}
+impl Advantage {
+    fn bonuses(&self) -> (i64, i64, i64, i64) {
+        match self {
+            Advantage::V1(ref advantage) => advantage.bonuses(),
+        }
+    }
 }
 impl<'de> Deserialize<'de> for Advantage {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -175,10 +205,30 @@ pub struct AdvantageContainerV1 {
     #[serde(flatten)]
     pub extra: HashMap<String, serde_value::Value>,
 }
+impl AdvantageContainerV1 {
+    fn bonuses(&self) -> (i64, i64, i64, i64) {
+        if self.disabled {
+            return (0, 0, 0, 0);
+        }
+        self.children.iter().map(AdvantageKind::bonuses).fold(
+            (0, 0, 0, 0),
+            |(acc_st, acc_hp, acc_ht, acc_fp), (st, hp, ht, fp)| {
+                (acc_st + st, acc_hp + hp, acc_ht + ht, acc_fp + fp)
+            },
+        )
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum AdvantageContainer {
     V1(AdvantageContainerV1),
+}
+impl AdvantageContainer {
+    fn bonuses(&self) -> (i64, i64, i64, i64) {
+        match self {
+            AdvantageContainer::V1(ref container) => container.bonuses(),
+        }
+    }
 }
 impl<'de> Deserialize<'de> for AdvantageContainer {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -222,4 +272,16 @@ pub enum AdvantageKind {
     AdvantageContainer(AdvantageContainer),
     #[serde(other)]
     Unknown,
+}
+
+impl AdvantageKind {
+    pub fn bonuses(&self) -> (i64, i64, i64, i64) {
+        match self {
+            AdvantageKind::Advantage(ref advantage) => advantage.bonuses(),
+            AdvantageKind::AdvantageContainer(ref container) => {
+                container.bonuses()
+            }
+            _ => (0, 0, 0, 0),
+        }
+    }
 }

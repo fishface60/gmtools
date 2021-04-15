@@ -26,7 +26,7 @@ pub struct Props {
 }
 
 pub struct CharacterSheetList {
-    inputs: HashMap<PortableOsString, NodeRef>,
+    inputs: HashMap<PortableOsString, (NodeRef, NodeRef)>,
     props: Props,
 }
 
@@ -57,24 +57,29 @@ impl Component for CharacterSheetList {
     fn update(&mut self, msg: Self::Message) -> ShouldRender {
         match msg {
             Msg::SheetAdded(path, character) => {
-                self.inputs.insert(path.clone(), NodeRef::default());
+                self.inputs.insert(
+                    path.clone(),
+                    (NodeRef::default(), NodeRef::default()),
+                );
                 self.props.character_sheets.insert(path, character);
                 true
             }
             Msg::SheetModified(path) => {
-                let hp_input = self
+                let (hp_input, fp_input) = self
                     .inputs
                     .get(&path)
-                    .expect("Sheet not deleted between click and msg")
-                    .cast::<HtmlInputElement>()
-                    .unwrap();
+                    .expect("Sheet not deleted between click and msg");
+                let hp_input = hp_input.cast::<HtmlInputElement>().unwrap();
+                let fp_input = fp_input.cast::<HtmlInputElement>().unwrap();
                 let hp = hp_input.value().parse().expect("HP text parseable");
+                let fp = fp_input.value().parse().expect("FP text parseable");
                 let sheet = self
                     .props
                     .character_sheets
                     .get_mut(&path)
                     .expect("Sheet not deleted between click and msg");
                 sheet.set_hit_points(hp);
+                sheet.set_fatigue_points(fp);
                 let link = self.props.model_link.borrow().clone().unwrap();
                 link.send_message(<Model as Component>::Message::SheetSubmit(
                     path,
@@ -92,13 +97,13 @@ impl Component for CharacterSheetList {
         html! {
           {
             for self.props.character_sheets.iter().map(|(path, character)| {
-              let (hp, maxHP) = character.get_hit_points();
+              let (hp, max_hp, fp, max_fp) = character.stats();
               let form_cb_path = path.clone();
               let form_cb = link.callback(move |evt: FocusEvent| {
                   evt.prevent_default();
                   Msg::SheetModified(form_cb_path.clone())
               });
-              let hp_input = self
+              let (hp_input, fp_input) = self
                   .inputs
                   .get(path)
                   .expect("Change message created ref before view")
@@ -109,7 +114,23 @@ impl Component for CharacterSheetList {
                                 path.to_str_lossy())>
                   <h2>{character.profile.name.clone()}</h2>
                   <form onsubmit=form_cb>
-                    <input type="number" value=hp ref=hp_input/>{"/"}{maxHP}
+                    <table>
+                      <tbody>
+                        <tr>
+                          <th><label for="hp_input">{"HP"}</label></th>
+                          <td><input id="hp_input" type="number" value=hp ref=hp_input/></td>
+                          <td>{"/"}</td>
+                          <td>{max_hp}</td>
+                        </tr>
+                        <tr>
+                          <th><label for="fp_input">{"FP"}</label></th>
+                          <td><input id="fp_input" type="number" value=fp ref=fp_input/></td>
+                          <td>{"/"}</td>
+                          <td>{max_fp}</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <button>{"💾"}</button>
                   </form>
                 </div>
               }

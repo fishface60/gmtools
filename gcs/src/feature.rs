@@ -235,3 +235,11 @@ pub enum Feature {
     #[serde(rename = "contained_weight_reduction")]
     ReduceContainedWeight(ReduceContainedWeight),
 }
+impl Feature {
+    pub fn bonuses(&self, levels: f64) -> (i64, i64, i64, i64) {
+        match self {
+            Self::AttributeBonus(ref bonus) => bonus.bonuses(levels),
+            _ => (0, 0, 0, 0),
+        }
+    }
+}
