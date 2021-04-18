@@ -3,7 +3,7 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_value::{Value as SerdeValue, ValueDeserializer};
 
-use crate::bonus::{LeveledDoubleAmount, LeveledIntegerAmount};
+use crate::bonus::{Bonuses, LeveledDoubleAmount, LeveledIntegerAmount};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -83,12 +83,12 @@ enum AttributeTag {
     SizeModifier,
 }
 impl AttributeBonus {
-    pub fn bonuses(&self, levels: f64) -> (i64, i64, i64, i64) {
+    pub fn bonuses(&self, levels: f64) -> Bonuses {
         match self {
             AttributeBonus::Strength(ref amount) => {
                 match amount.limit {
                     STLimitation::None => (),
-                    _ => return (0, 0, 0, 0),
+                    _ => return Default::default(),
                 }
                 let st = ((amount.amount.amount as f64)
                     * if amount.amount.per_level {
@@ -96,27 +96,27 @@ impl AttributeBonus {
                     } else {
                         1f64
                     }) as i64;
-                (st, 0, 0, 0)
+                Bonuses::with_strength(st)
             }
             AttributeBonus::HitPoints(ref amount) => {
                 let hp = ((amount.amount as f64)
                     * if amount.per_level { levels } else { 1f64 })
                     as i64;
-                (0, hp, 0, 0)
+                Bonuses::with_hit_points(hp)
             }
             AttributeBonus::Health(ref amount) => {
                 let ht = ((amount.amount as f64)
                     * if amount.per_level { levels } else { 1f64 })
                     as i64;
-                (0, 0, ht, 0)
+                Bonuses::with_health(ht)
             }
             AttributeBonus::FatiguePoints(ref amount) => {
                 let fp = ((amount.amount as f64)
                     * if amount.per_level { levels } else { 1f64 })
                     as i64;
-                (0, 0, 0, fp)
+                Bonuses::with_fatigue_points(fp)
             }
-            _ => (0, 0, 0, 0),
+            _ => Default::default(),
         }
     }
 }

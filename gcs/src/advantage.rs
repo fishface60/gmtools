@@ -7,6 +7,7 @@ use serde::{
 use serde_value::ValueDeserializer;
 
 use crate::advantage_modifier::AdvantageModifierKind;
+use crate::bonus::Bonuses;
 use crate::control_roll::{ControlRoll, ControlRollAdjust};
 use crate::feature::Feature;
 use crate::list_row::RowIdFragment;
@@ -88,9 +89,9 @@ pub struct AdvantageV1 {
     pub extra: HashMap<String, serde_value::Value>,
 }
 impl AdvantageV1 {
-    pub fn bonuses(&self) -> (i64, i64, i64, i64) {
+    pub fn bonuses(&self) -> Bonuses {
         if self.disabled {
-            return (0, 0, 0, 0);
+            return Default::default();
         }
         let levels: f64 = match self.levels {
             None => 0f64,
@@ -102,12 +103,7 @@ impl AdvantageV1 {
                 }
             }
         };
-        self.features.iter().map(|f| f.bonuses(levels)).fold(
-            (0, 0, 0, 0),
-            |(acc_st, acc_hp, acc_ht, acc_fp), (st, hp, ht, fp)| {
-                (acc_st + st, acc_hp + hp, acc_ht + ht, acc_fp + fp)
-            },
-        )
+        self.features.iter().map(|f| f.bonuses(levels)).sum()
     }
 }
 
@@ -116,7 +112,7 @@ pub enum Advantage {
     V1(AdvantageV1),
 }
 impl Advantage {
-    fn bonuses(&self) -> (i64, i64, i64, i64) {
+    fn bonuses(&self) -> Bonuses {
         match self {
             Advantage::V1(ref advantage) => advantage.bonuses(),
         }
@@ -206,16 +202,11 @@ pub struct AdvantageContainerV1 {
     pub extra: HashMap<String, serde_value::Value>,
 }
 impl AdvantageContainerV1 {
-    fn bonuses(&self) -> (i64, i64, i64, i64) {
+    fn bonuses(&self) -> Bonuses {
         if self.disabled {
-            return (0, 0, 0, 0);
+            return Default::default();
         }
-        self.children.iter().map(AdvantageKind::bonuses).fold(
-            (0, 0, 0, 0),
-            |(acc_st, acc_hp, acc_ht, acc_fp), (st, hp, ht, fp)| {
-                (acc_st + st, acc_hp + hp, acc_ht + ht, acc_fp + fp)
-            },
-        )
+        self.children.iter().map(AdvantageKind::bonuses).sum()
     }
 }
 
@@ -224,7 +215,7 @@ pub enum AdvantageContainer {
     V1(AdvantageContainerV1),
 }
 impl AdvantageContainer {
-    fn bonuses(&self) -> (i64, i64, i64, i64) {
+    fn bonuses(&self) -> Bonuses {
         match self {
             AdvantageContainer::V1(ref container) => container.bonuses(),
         }
@@ -275,13 +266,13 @@ pub enum AdvantageKind {
 }
 
 impl AdvantageKind {
-    pub fn bonuses(&self) -> (i64, i64, i64, i64) {
+    pub fn bonuses(&self) -> Bonuses {
         match self {
             AdvantageKind::Advantage(ref advantage) => advantage.bonuses(),
             AdvantageKind::AdvantageContainer(ref container) => {
                 container.bonuses()
             }
-            _ => (0, 0, 0, 0),
+            _ => Default::default(),
         }
     }
 }

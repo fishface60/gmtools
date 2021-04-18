@@ -8,6 +8,7 @@ use serde::{
 use serde_value::{Value as SerdeValue, ValueDeserializer};
 
 use crate::advantage::AdvantageKind;
+use crate::bonus::Bonuses;
 use crate::date_format;
 use crate::list_row::RowIdFragment;
 use crate::print_settings::PrintSettings;
@@ -125,20 +126,19 @@ pub struct CharacterV1 {
 }
 
 impl CharacterV1 {
-    pub fn bonuses(&self) -> (i64, i64, i64, i64) {
-        self.advantages.iter().map(AdvantageKind::bonuses).fold(
-            (0, 0, 0, 0),
-            |(acc_st, acc_hp, acc_ht, acc_fp), (st, hp, ht, fp)| {
-                (acc_st + st, acc_hp + hp, acc_ht + ht, acc_fp + fp)
-            },
-        )
+    pub fn bonuses(&self) -> Bonuses {
+        self.advantages.iter().map(AdvantageKind::bonuses).sum()
     }
     pub fn stats(&self) -> (i64, u64, i64, u64) {
-        let (st_bonus, hp_bonus, ht_bonus, fp_bonus) = self.bonuses();
-        let max_hp: u64 =
-            ((self.strength as i64) + self.hp_adj + st_bonus + hp_bonus) as u64;
-        let max_fp: u64 =
-            ((self.health as i64) + self.fp_adj + ht_bonus + fp_bonus) as u64;
+        let bonuses = self.bonuses();
+        let max_hp: u64 = ((self.strength as i64)
+            + self.hp_adj
+            + bonuses.strength
+            + bonuses.hit_points) as u64;
+        let max_fp: u64 = ((self.health as i64)
+            + self.fp_adj
+            + bonuses.health
+            + bonuses.fatigue_points) as u64;
         let cur_hp: i64 = (max_hp as i64) - (self.hp_damage as i64);
         let cur_fp: i64 = (max_fp as i64) - (self.fp_damage as i64);
         (cur_hp, max_hp, cur_fp, max_fp)

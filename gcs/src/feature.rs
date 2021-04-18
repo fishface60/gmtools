@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::attribute_bonus::AttributeBonus;
-use crate::bonus::LeveledIntegerAmount;
+use crate::bonus::{Bonuses, LeveledIntegerAmount};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "compare")]
@@ -236,10 +236,10 @@ pub enum Feature {
     ReduceContainedWeight(ReduceContainedWeight),
 }
 impl Feature {
-    pub fn bonuses(&self, levels: f64) -> (i64, i64, i64, i64) {
+    pub fn bonuses(&self, levels: f64) -> Bonuses {
         match self {
             Self::AttributeBonus(ref bonus) => bonus.bonuses(levels),
-            _ => (0, 0, 0, 0),
+            _ => Default::default(),
         }
     }
 }
