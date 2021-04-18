@@ -196,6 +196,35 @@ impl CharacterV1 {
         let (_, _, _, max, _) = self.stats();
         self.fp_damage = (max as i64 - new) as u64;
     }
+    pub fn set_energy_reserves<'a, I>(&mut self, it: I)
+    where
+        I: IntoIterator<Item = (&'a String, u64)>,
+    {
+        let (_, _, _, _, er) = self.stats();
+        let gmtool_state = match self
+            .third_party
+            .entry(String::from("gmtool"))
+            .or_insert_with(|| SerdeValue::Map(Default::default()))
+        {
+            SerdeValue::Map(ref mut gmtool_state) => gmtool_state,
+            _ => unreachable!(),
+        };
+
+        let energy_reserve_damages = match gmtool_state
+            .entry(SerdeValue::String("energy_reserve_damages".to_string()))
+            .or_insert_with(|| SerdeValue::Map(Default::default()))
+        {
+            SerdeValue::Map(ref mut energy_reserve_damages) => {
+                energy_reserve_damages
+            }
+            _ => unreachable!(),
+        };
+        for (energy_reserve, current) in it.into_iter() {
+            let (_, max) = er.get(energy_reserve).cloned().unwrap_or((0, 0));
+            let key = SerdeValue::String(energy_reserve.clone());
+            energy_reserve_damages.insert(key, SerdeValue::U64(max - current));
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

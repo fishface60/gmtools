@@ -1,5 +1,6 @@
 #![allow(clippy::single_component_path_imports)]
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 
 use web_sys::{FocusEvent, HtmlInputElement};
@@ -26,7 +27,10 @@ pub struct Props {
 }
 
 pub struct CharacterSheetList {
-    inputs: HashMap<PortableOsString, (NodeRef, NodeRef)>,
+    inputs: HashMap<
+        PortableOsString,
+        (NodeRef, NodeRef, RefCell<HashMap<String, NodeRef>>),
+    >,
     props: Props,
 }
 
@@ -57,15 +61,12 @@ impl Component for CharacterSheetList {
     fn update(&mut self, msg: Self::Message) -> ShouldRender {
         match msg {
             Msg::SheetAdded(path, character) => {
-                self.inputs.insert(
-                    path.clone(),
-                    (NodeRef::default(), NodeRef::default()),
-                );
+                self.inputs.insert(path.clone(), Default::default());
                 self.props.character_sheets.insert(path, character);
                 true
             }
             Msg::SheetModified(path) => {
-                let (hp_input, fp_input) = self
+                let (hp_input, fp_input, er_inputs) = self
                     .inputs
                     .get(&path)
                     .expect("Sheet not deleted between click and msg");
@@ -73,6 +74,14 @@ impl Component for CharacterSheetList {
                 let fp_input = fp_input.cast::<HtmlInputElement>().unwrap();
                 let hp = hp_input.value().parse().expect("HP text parseable");
                 let fp = fp_input.value().parse().expect("FP text parseable");
+                let er_inputs_ref = er_inputs.borrow();
+                let ers =
+                    er_inputs_ref.iter().map(|(energy_reserve, node)| {
+                        let input = node.cast::<HtmlInputElement>().unwrap();
+                        let current =
+                            input.value().parse().expect("ER parseable");
+                        (energy_reserve, current)
+                    });
                 let sheet = self
                     .props
                     .character_sheets
@@ -80,6 +89,7 @@ impl Component for CharacterSheetList {
                     .expect("Sheet not deleted between click and msg");
                 sheet.set_hit_points(hp);
                 sheet.set_fatigue_points(fp);
+                sheet.set_energy_reserves(ers);
                 let link = self.props.model_link.borrow().clone().unwrap();
                 link.send_message(<Model as Component>::Message::SheetSubmit(
                     path,
@@ -103,11 +113,10 @@ impl Component for CharacterSheetList {
                   evt.prevent_default();
                   Msg::SheetModified(form_cb_path.clone())
               });
-              let (hp_input, fp_input) = self
+              let (hp_input, fp_input, er_inputs) = self
                   .inputs
                   .get(path)
-                  .expect("Change message created ref before view")
-                  .clone();
+                  .expect("Change message created ref before view");
               html! {
                 <div id=format!("{}{}",
                                 self.props.link_prefix,
@@ -118,21 +127,27 @@ impl Component for CharacterSheetList {
                       <tbody>
                         <tr>
                           <th><label for="hp_input">{"HP"}</label></th>
-                          <td><input id="hp_input" type="number" value=hp ref=hp_input/></td>
+                          <td><input id="hp_input" type="number" value=hp ref=hp_input.clone()/></td>
                           <td>{"/"}</td>
                           <td>{max_hp}</td>
                         </tr>
                         <tr>
                           <th><label for="fp_input">{"FP"}</label></th>
-                          <td><input id="fp_input" type="number" value=fp ref=fp_input/></td>
+                          <td><input id="fp_input" type="number" value=fp ref=fp_input.clone()/></td>
                           <td>{"/"}</td>
                           <td>{max_fp}</td>
                         </tr>
                         { for energy_reserves.iter().map(|(name, (current, max))| {
+                            let mut input_id = name.clone();
+                            input_id.push_str("_er_input");
+                            let mut er_input_ref = er_inputs.borrow_mut();
+                            let er_input = er_input_ref
+                                .entry(name.clone())
+                                .or_insert(Default::default());
                             html! {
                               <tr>
-                                <th>{&name}</th>
-                                <td>{current}</td>
+                                <th><label for=input_id>{&name}</label></th>
+                                <td><input id=input_id type="number" value=current ref=er_input.clone()/></td>
                                 <td>{"/"}</td>
                                 <td>{max}</td>
                               </tr>
