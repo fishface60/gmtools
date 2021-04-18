@@ -129,7 +129,50 @@ impl CharacterV1 {
     pub fn bonuses(&self) -> Bonuses {
         self.advantages.iter().map(AdvantageKind::bonuses).sum()
     }
-    pub fn stats(&self) -> (i64, u64, i64, u64) {
+    fn current_energy_reserves(
+        &self,
+        mut er_bonuses: HashMap<String, i64>,
+    ) -> HashMap<String, (u64, u64)> {
+        let gmtool_state = match self.third_party.get("gmtool") {
+            Some(SerdeValue::Map(gmtool_state)) => gmtool_state.clone(),
+            _ => Default::default(),
+        };
+
+        let energy_reserve_damages = match gmtool_state
+            .get(&SerdeValue::String("energy_reserve_damages".to_string()))
+        {
+            Some(SerdeValue::Map(energy_reserves)) => energy_reserves.clone(),
+            _ => Default::default(),
+        };
+
+        let mut current_energy_reserves =
+            HashMap::with_capacity(er_bonuses.len());
+        for (energy_reserve, level) in er_bonuses.drain() {
+            let key = SerdeValue::String(energy_reserve);
+            let mut damage = match energy_reserve_damages.get(&key) {
+                Some(v) => match v {
+                    SerdeValue::U8(v) => *v as u64,
+                    SerdeValue::U16(v) => *v as u64,
+                    SerdeValue::U32(v) => *v as u64,
+                    SerdeValue::U64(v) => *v as u64,
+                    _ => Default::default(),
+                },
+                _ => Default::default(),
+            };
+            let energy_reserve = match key {
+                SerdeValue::String(energy_reserve) => energy_reserve,
+                _ => unreachable!(),
+            };
+            let level = level as u64;
+            if damage > level {
+                damage = level;
+            }
+            current_energy_reserves
+                .insert(energy_reserve, (level - damage, level as u64));
+        }
+        current_energy_reserves
+    }
+    pub fn stats(&self) -> (i64, u64, i64, u64, HashMap<String, (u64, u64)>) {
         let bonuses = self.bonuses();
         let max_hp: u64 = ((self.strength as i64)
             + self.hp_adj
@@ -141,14 +184,16 @@ impl CharacterV1 {
             + bonuses.fatigue_points) as u64;
         let cur_hp: i64 = (max_hp as i64) - (self.hp_damage as i64);
         let cur_fp: i64 = (max_fp as i64) - (self.fp_damage as i64);
-        (cur_hp, max_hp, cur_fp, max_fp)
+        let er = self.current_energy_reserves(bonuses.energy_reserves);
+
+        (cur_hp, max_hp, cur_fp, max_fp, er)
     }
     pub fn set_hit_points(&mut self, new: i64) {
-        let (_, max, _, _) = self.stats();
+        let (_, max, _, _, _) = self.stats();
         self.hp_damage = (max as i64 - new) as u64;
     }
     pub fn set_fatigue_points(&mut self, new: i64) {
-        let (_, _, _, max) = self.stats();
+        let (_, _, _, max, _) = self.stats();
         self.fp_damage = (max as i64 - new) as u64;
     }
 }

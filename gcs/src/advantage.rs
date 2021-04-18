@@ -89,6 +89,13 @@ pub struct AdvantageV1 {
     pub extra: HashMap<String, serde_value::Value>,
 }
 impl AdvantageV1 {
+    // GCS format doesn't include energy reserve feature, parse from name.
+    fn energy_reserve(&self) -> Option<&str> {
+        // TODO: Use nicer parser
+        const ER_PREFIX: &str = "Energy Reserve (";
+        const ER_SUFFIX: &str = ")";
+        self.name.strip_prefix(ER_PREFIX)?.strip_suffix(ER_SUFFIX)
+    }
     pub fn bonuses(&self) -> Bonuses {
         if self.disabled {
             return Default::default();
@@ -103,7 +110,15 @@ impl AdvantageV1 {
                 }
             }
         };
-        self.features.iter().map(|f| f.bonuses(levels)).sum()
+        let mut bonuses = match self.energy_reserve() {
+            Some(energy_reserve) => Bonuses::with_energy_reserve(
+                energy_reserve.to_string(),
+                levels as i64,
+            ),
+            None => Default::default(),
+        };
+        bonuses.steal(self.features.iter().map(|f| f.bonuses(levels)).sum());
+        bonuses
     }
 }
 

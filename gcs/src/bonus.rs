@@ -11,6 +11,7 @@ pub struct Bonuses {
     pub hit_points: i64,
     pub health: i64,
     pub fatigue_points: i64,
+    pub energy_reserves: HashMap<String, i64>,
 }
 
 impl Bonuses {
@@ -38,12 +39,23 @@ impl Bonuses {
             ..Default::default()
         }
     }
+    pub fn with_energy_reserve(energy_reserve: String, level: i64) -> Self {
+        let mut energy_reserves = HashMap::with_capacity(1);
+        energy_reserves.insert(energy_reserve, level);
+        Self {
+            energy_reserves,
+            ..Default::default()
+        }
+    }
 
-    fn steal(&mut self, mut other: Self) {
+    pub fn steal(&mut self, mut other: Self) {
         self.strength += other.strength;
         self.hit_points += other.hit_points;
         self.health += other.health;
         self.fatigue_points += other.fatigue_points;
+        for (energy_reserve, level) in other.energy_reserves.drain() {
+            *self.energy_reserves.entry(energy_reserve).or_default() += level;
+        }
     }
 }
 

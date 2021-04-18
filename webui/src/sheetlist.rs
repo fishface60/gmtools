@@ -97,7 +97,7 @@ impl Component for CharacterSheetList {
         html! {
           {
             for self.props.character_sheets.iter().map(|(path, character)| {
-              let (hp, max_hp, fp, max_fp) = character.stats();
+              let (hp, max_hp, fp, max_fp, energy_reserves) = character.stats();
               let form_cb_path = path.clone();
               let form_cb = link.callback(move |evt: FocusEvent| {
                   evt.prevent_default();
@@ -128,6 +128,17 @@ impl Component for CharacterSheetList {
                           <td>{"/"}</td>
                           <td>{max_fp}</td>
                         </tr>
+                        { for energy_reserves.iter().map(|(name, (current, max))| {
+                            html! {
+                              <tr>
+                                <th>{&name}</th>
+                                <td>{current}</td>
+                                <td>{"/"}</td>
+                                <td>{max}</td>
+                              </tr>
+                            }
+                          })
+                        }
                       </tbody>
                     </table>
                     <button>{"💾"}</button>
